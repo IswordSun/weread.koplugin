@@ -24,6 +24,7 @@ local VerticalGroup = require("ui/widget/verticalgroup")
 local VerticalSpan = require("ui/widget/verticalspan")
 local Widget = require("ui/widget/widget")
 local Screen = Device.screen
+local CARD_RADIUS = Size.radius and Size.radius.default or Screen:scaleBySize(4)
 local FocusNav = require("weread.ui.focus_nav")
 local I18n = require("weread.lib.i18n")
 local T = require("ffi/util").template
@@ -43,6 +44,18 @@ local InvertedFrame = FrameContainer:extend{}
 function InvertedFrame:paintTo(bb, x, y)
     FrameContainer.paintTo(self, bb, x, y)
     if self._invert then bb:invertRect(x, y, self.dimen.w, self.dimen.h) end
+end
+
+-- A crisp, offset shadow reads as depth on e-ink without blur or a costly
+-- grayscale repaint. The rounded FrameContainer remains the visible card.
+local ShadowFrame = FrameContainer:extend{ shadow_offset = 0 }
+function ShadowFrame:paintTo(bb, x, y)
+    local offset = math.max(0, math.floor(tonumber(self.shadow_offset) or 0))
+    if offset > 0 then
+        bb:paintRect(x + offset, y + offset, self.dimen.w, self.dimen.h,
+            Blitbuffer.COLOR_LIGHT_GRAY)
+    end
+    FrameContainer.paintTo(self, bb, x, y)
 end
 
 local ShelfChip = InputContainer:extend{
@@ -186,15 +199,20 @@ local CoverCell = InputContainer:extend{
 }
 
 function CoverCell:init()
-    local padding = Size.padding.large
+    local outer_padding = Size.padding.large
+    local shadow_offset = Screen:scaleBySize(3)
+    local padding = Size.padding.small
     local border = Size.border.thin
-    local cover_width = math.max(1, self.width - 2 * padding)
+    local cover_width = math.max(1, self.width - 2 * outer_padding - shadow_offset)
+    local card_height = math.max(1, self.height - shadow_offset)
     local label_height = math.min(
-        math.max(1, math.floor(self.height * 0.22)),
+        math.max(1, math.floor(card_height * 0.22)),
         Screen:scaleBySize(38)
     )
-    local cover_height = math.max(1, self.height - label_height)
-    local image_width = math.max(1, cover_width - 2 * padding - 2 * border)
+    local inner_width = math.max(1, cover_width - 2 * (padding + border))
+    local inner_height = math.max(1, card_height - 2 * (padding + border))
+    local cover_height = math.max(1, inner_height - label_height)
+    local image_width = math.max(1, inner_width - 2 * padding - 2 * border)
     local image_height = math.max(1, cover_height - 2 * padding - 2 * border)
     local cover_content
     if self.cover_path then
@@ -228,13 +246,14 @@ function CoverCell:init()
         self._has_cover = false
     end
     local cover_frame = CenterContainer:new{
-        dimen = Geom:new{ w = cover_width, h = cover_height },
+        dimen = Geom:new{ w = inner_width, h = cover_height },
         FrameContainer:new{
-            width = cover_width,
+            width = inner_width,
             height = cover_height,
             margin = 0,
             padding = padding,
             bordersize = border,
+            radius = CARD_RADIUS,
             background = Blitbuffer.COLOR_WHITE,
             CenterContainer:new{
                 dimen = Geom:new{ w = image_width, h = image_height },
@@ -243,18 +262,18 @@ function CoverCell:init()
         },
     }
     local cover_layers = {
-        dimen = Geom:new{ w = cover_width, h = cover_height },
+        dimen = Geom:new{ w = inner_width, h = cover_height },
         cover_frame,
     }
     self._has_cached_corner = self.cached == true
     if self._has_cached_corner then
         local corner_size = math.max(1, math.min(
-            cover_width,
+            inner_width,
             cover_height,
             Screen:scaleBySize(16)
         ))
         local corner = CachedCorner:new{ size = corner_size }
-        corner.overlap_offset = { cover_width - corner_size, 0 }
+        corner.overlap_offset = { inner_width - corner_size, 0 }
         cover_layers[#cover_layers + 1] = corner
         self._cached_corner_size = corner_size
     end
@@ -263,17 +282,21 @@ function CoverCell:init()
     local title_widget = TextWidget:new{
         text = title,
         face = Font:getFace("cfont", 16),
-        max_width = cover_width,
+        bold = true,
+        max_width = inner_width,
     }
-    self.frame = FrameContainer:new{
-        bordersize = 0,
-        radius = 0,
+    self.frame = ShadowFrame:new{
+        width = cover_width,
+        height = card_height,
+        bordersize = border,
+        radius = CARD_RADIUS,
         margin = 0,
-        padding = 0,
+        padding = padding,
         background = Blitbuffer.COLOR_WHITE,
+        shadow_offset = shadow_offset,
         show_parent = self.show_parent,
         CenterContainer:new{
-            dimen = Geom:new{ w = self.width, h = self.height },
+            dimen = Geom:new{ w = inner_width, h = inner_height },
             VerticalGroup:new{
                 align = "center",
                 cover,
@@ -281,8 +304,11 @@ function CoverCell:init()
             },
         },
     }
-    self[1] = self.frame
-    self.dimen = self.frame:getSize()
+    self[1] = CenterContainer:new{
+        dimen = Geom:new{ w = self.width, h = self.height },
+        self.frame,
+    }
+    self.dimen = self[1]:getSize()
     self.ges_events = {
         TapCoverCell = {
             GestureRange:new{ ges = "tap", range = self.dimen },
@@ -370,35 +396,40 @@ function LibraryView:groupBar()
     end
     if #tabs == 0 then return nil end
 
-    local function chip_width(text, limit)
+    local function minimum_chip_width(text)
         local label = TextWidget:new{ text = text, face = Font:getFace("cfont", 17) }
         local padding = 2 * (Size.padding.default + Size.border.thin)
-        return math.max(
-            Screen:scaleBySize(76),
-            math.min(limit, math.ceil(label:getSize().w + padding))
-        )
+        return math.max(Screen:scaleBySize(76), math.ceil(label:getSize().w + padding))
     end
 
-    local function pack_tabs(width)
-        local pages, page, used = {}, {}, 0
-        for _, tab in ipairs(tabs) do
-            local width_for_tab = chip_width(tab.text, width)
-            if #page > 0 and used + width_for_tab > width then
-                pages[#pages + 1] = page
-                page, used = {}, 0
+    local minimum_width = 1
+    for _, tab in ipairs(tabs) do
+        minimum_width = math.max(minimum_width, minimum_chip_width(tab.text))
+    end
+    local function pages_for(width)
+        local columns = math.max(1, math.floor(width / minimum_width))
+        local pages = {}
+        for index = 1, #tabs, columns do
+            local page = {}
+            local last = math.min(#tabs, index + columns - 1)
+            local equal_width = math.floor(width / (last - index + 1))
+            for tab_index = index, last do
+                local position = tab_index - index + 1
+                local count = last - index + 1
+                local tab_width = position == count and width - equal_width * (count - 1)
+                    or equal_width
+                page[#page + 1] = { tab = tabs[tab_index], width = tab_width }
             end
-            page[#page + 1] = { tab = tab, width = width_for_tab }
-            used = used + width_for_tab
+            pages[#pages + 1] = page
         end
-        pages[#pages + 1] = page
         return pages
     end
 
-    local pages = pack_tabs(self.screen_w)
+    local pages = pages_for(self.screen_w)
     local navigation_w = 0
     if #pages > 1 then
         navigation_w = Screen:scaleBySize(34)
-        pages = pack_tabs(self.screen_w - navigation_w * 2)
+        pages = pages_for(self.screen_w - navigation_w * 2)
     end
     local page_count = #pages
     self.group_page = math.max(1, math.min(tonumber(self.group_page) or 1, page_count))

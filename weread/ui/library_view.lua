@@ -121,29 +121,10 @@ function ShelfChip:onUnfocus()
 end
 
 function CachedCorner:paintTo(bb, x, y)
-    local radius = math.max(2, math.floor((self.size - 1) / 2))
-    local center_x = x + radius
-    local center_y = y + radius
-    for row = -radius, radius do
-        local half_width = math.floor(math.sqrt(radius * radius - row * row))
-        bb:paintRect(center_x - half_width, center_y + row,
-            2 * half_width + 1, 1, Blitbuffer.COLOR_WHITE)
+    for row = 0, self.size - 1 do
+        local width = self.size - row
+        bb:paintRect(x + row, y + row, width, 1, Blitbuffer.COLOR_BLACK)
     end
-    local shaft_width = math.max(1, math.floor(self.size * 0.12))
-    local shaft_height = math.max(3, math.floor(self.size * 0.28))
-    local shaft_x = x + math.floor((self.size - shaft_width) / 2)
-    local shaft_y = y + math.floor(self.size * 0.2)
-    local arrow_height = math.max(3, math.floor(self.size * 0.22))
-    local arrow_y = shaft_y + shaft_height
-    local bar_width = math.max(5, math.floor(self.size * 0.5))
-    local bar_x = x + math.floor((self.size - bar_width) / 2)
-    local bar_y = y + math.floor(self.size * 0.75)
-    bb:paintRect(shaft_x, shaft_y, shaft_width, shaft_height, Blitbuffer.COLOR_BLACK)
-    for row = 0, arrow_height - 1 do
-        bb:paintRect(x + math.floor(self.size / 2) - row, arrow_y + row,
-            2 * row + 1, 1, Blitbuffer.COLOR_BLACK)
-    end
-    bb:paintRect(bar_x, bar_y, bar_width, 1, Blitbuffer.COLOR_BLACK)
 end
 
 function PrivateBadge:paintTo(bb, x, y)
@@ -162,18 +143,26 @@ function PrivateBadge:paintTo(bb, x, y)
             2 * half_width + 1, 1, Blitbuffer.COLOR_WHITE)
     end
     local body_width = math.max(4, math.floor(self.size * 0.42))
-    local body_height = math.max(4, math.floor(self.size * 0.33))
+    local body_height = math.max(4, math.floor(self.size * 0.25))
     local body_x = x + math.floor((self.size - body_width) / 2)
-    local body_y = y + math.floor(self.size * 0.5)
-    local shackle_width = math.max(2, body_width - 2)
-    local shackle_x = x + math.floor((self.size - shackle_width) / 2)
-    local shackle_height = math.max(2, math.floor(self.size * 0.25))
-    local shackle_y = body_y - shackle_height
+    local body_y = center_y
+    local shackle_radius = math.max(2, math.floor(body_width / 2))
+    local shackle_x = center_x
+    local shackle_y = body_y
     bb:paintRect(body_x, body_y, body_width, body_height, Blitbuffer.COLOR_BLACK)
-    bb:paintRect(shackle_x, shackle_y, shackle_width, 1, Blitbuffer.COLOR_BLACK)
-    bb:paintRect(shackle_x, shackle_y + 1, 1, shackle_height, Blitbuffer.COLOR_BLACK)
-    bb:paintRect(shackle_x + shackle_width - 1, shackle_y + 1, 1, shackle_height,
-        Blitbuffer.COLOR_BLACK)
+    for row = 0, shackle_radius do
+        local half_width = math.floor(math.sqrt(shackle_radius * shackle_radius - row * row))
+        bb:paintRect(shackle_x - half_width, shackle_y - row,
+            2 * half_width + 1, 1, Blitbuffer.COLOR_BLACK)
+    end
+    local shackle_inner_radius = math.max(0, shackle_radius - 2)
+    for row = 0, shackle_inner_radius do
+        local half_width = math.floor(math.sqrt(
+            shackle_inner_radius * shackle_inner_radius - row * row
+        ))
+        bb:paintRect(shackle_x - half_width, shackle_y - row - 1,
+            2 * half_width + 1, 1, Blitbuffer.COLOR_WHITE)
+    end
 end
 
 local function is_private_book(book)
@@ -329,7 +318,7 @@ function CoverCell:init()
         local corner_size = math.max(1, math.min(
             cover_width,
             cover_height,
-            Screen:scaleBySize(18)
+            Screen:scaleBySize(16)
         ))
         local corner = CachedCorner:new{ size = corner_size }
         corner.overlap_offset = { cover_width - corner_size, 0 }

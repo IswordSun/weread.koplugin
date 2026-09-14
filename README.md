@@ -84,7 +84,7 @@ koreader/plugins/weread.koplugin/
 │   ├── 继续匹配（显示完成章节和划线条数）
 │   ├── 选择章节匹配（树状目录、父子联动多选）
 │   └── 清理划线和想法（再次匹配时下载最新数据）
-├── 书架               书籍 / 公众号 Tab；书架内搜索、离线缓存、手动更新
+├── 书架               全部书籍 / 书籍分组 / 公众号 Tab；分组页展示微信读书自定义分组、未分组书籍；支持搜索、离线缓存、手动更新
 ├── weread收藏夹        已下载书籍（不包含单章）的本地入口
 ├── 搜索               搜索微信读书
 ├── 阅读时间上报        后台上报阅读时长
@@ -161,4 +161,3 @@ Copyright © 2026 finlater and contributors.
 |------|-----------------------------------------------------|
 | [kindlebtcontroller.koplugin](https://github.com/finlater/kindlebtcontroller.koplugin) | 蓝牙手柄/遥控器控制 Kindle —— 翻页、调节亮度、章节跳转等 20+ 操作，按键完全可自定义。 |
 | [one.koplugin](https://github.com/finlater/one.koplugin) | 在 KOReader 上离线阅读「ONE · 一个」每日更新：一图、一文、一问答。           |
-

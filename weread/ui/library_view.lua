@@ -1,4 +1,4 @@
--- Full-screen, e-ink-friendly bookshelf with direct Books/Public Accounts tabs.
+-- Full-screen, e-ink-friendly bookshelf with user-group chips and cover grids.
 
 local Blitbuffer = require("ffi/blitbuffer")
 local Button = require("ui/widget/button")
@@ -37,6 +37,62 @@ local CachedCorner = Widget:extend{
 function CachedCorner:init()
     self.size = math.max(1, math.floor(tonumber(self.size) or 1))
     self.dimen = Geom:new{ w = self.size, h = self.size }
+end
+
+local InvertedFrame = FrameContainer:extend{}
+function InvertedFrame:paintTo(bb, x, y)
+    FrameContainer.paintTo(self, bb, x, y)
+    if self._invert then bb:invertRect(x, y, self.dimen.w, self.dimen.h) end
+end
+
+local ShelfChip = InputContainer:extend{
+    text = "",
+    width = nil,
+    selected = false,
+    callback = nil,
+    show_parent = nil,
+}
+
+function ShelfChip:init()
+    local height = Screen:scaleBySize(42)
+    local label = TextWidget:new{
+        text = self.text,
+        face = Font:getFace("cfont", 17),
+        max_width = math.max(1, self.width - 2 * Size.padding.small),
+    }
+    self.frame = InvertedFrame:new{
+        width = self.width,
+        height = height,
+        margin = 0,
+        padding = Size.padding.small,
+        bordersize = Size.border.thin,
+        background = Blitbuffer.COLOR_WHITE,
+        _invert = self.selected == true,
+        show_parent = self.show_parent,
+        CenterContainer:new{
+            dimen = Geom:new{ w = math.max(1, self.width - 2 * Size.padding.small),
+                h = math.max(1, height - 2 * Size.padding.small) },
+            label,
+        },
+    }
+    self[1] = self.frame
+    self.dimen = self.frame:getSize()
+    self.ges_events = { TapShelfChip = { GestureRange:new{ ges = "tap", range = self.dimen } } }
+end
+
+function ShelfChip:onTapShelfChip()
+    if self.callback then self.callback() end
+    return true
+end
+
+function ShelfChip:onFocus()
+    self.frame._invert = not self.selected
+    return true
+end
+
+function ShelfChip:onUnfocus()
+    self.frame._invert = self.selected == true
+    return true
 end
 
 function CachedCorner:paintTo(bb, x, y)
@@ -130,12 +186,12 @@ local CoverCell = InputContainer:extend{
 }
 
 function CoverCell:init()
-    local padding = Size.padding.small
+    local padding = Size.padding.large
     local border = Size.border.thin
     local cover_width = math.max(1, self.width - 2 * padding)
     local label_height = math.min(
-        math.max(1, math.floor(self.height * 0.35)),
-        Screen:scaleBySize(52)
+        math.max(1, math.floor(self.height * 0.22)),
+        Screen:scaleBySize(38)
     )
     local cover_height = math.max(1, self.height - label_height)
     local image_width = math.max(1, cover_width - 2 * padding - 2 * border)
@@ -206,7 +262,7 @@ function CoverCell:init()
     local title = self.book.title or self.book.bookId or self.book.book_id or _("Untitled")
     local title_widget = TextWidget:new{
         text = title,
-        face = Font:getFace("cfont", 18),
+        face = Font:getFace("cfont", 16),
         max_width = cover_width,
     }
     self.frame = FrameContainer:new{
@@ -254,6 +310,9 @@ local LibraryView = FocusManager:extend{
     title = nil,
     wp_enable = true,
     books = nil,
+    groups = nil,
+    group_key = nil,
+    group_page = 1,
     accounts = nil,
     keyword = nil,
     sort_label = nil,
@@ -264,6 +323,8 @@ local LibraryView = FocusManager:extend{
     on_sort = nil,
     on_filter = nil,
     on_select = nil,
+    on_select_group = nil,
+    on_group_page_changed = nil,
     paged = false,
     page = 1,
     page_size = 10,
@@ -277,43 +338,58 @@ local LibraryView = FocusManager:extend{
 }
 
 function LibraryView:tabBar()
-    local tabs = {
-        { mode = "books", text = T(_("Books (%1)"), #(self.books or {})) },
-        { mode = "public_account", text = T(_("Public Accounts (%1)"), #(self.accounts or {})) },
-    }
-    local cell_w = math.floor(self.screen_w / #tabs)
+    local tabs = { { kind = "all", text = _("All books") } }
+    for _, group in ipairs(self.groups or {}) do
+        tabs[#tabs + 1] = { kind = "group", text = group.label, key = group.key }
+    end
+    if self.wp_enable then
+        tabs[#tabs + 1] = { kind = "public_account", text = _("Public Accounts") }
+    end
+    local per_page = 3
+    local page_count = math.max(1, math.ceil(#tabs / per_page))
+    self.group_page = math.max(1, math.min(tonumber(self.group_page) or 1, page_count))
+    local first = (self.group_page - 1) * per_page + 1
+    local last = math.min(#tabs, first + per_page - 1)
+    local visible = {}
+    for index = first, last do visible[#visible + 1] = tabs[index] end
+    local navigation_w = page_count > 1 and Screen:scaleBySize(34) or 0
+    local cell_w = math.floor((self.screen_w - navigation_w * 2) / math.max(1, #visible))
     local row = HorizontalGroup:new{}
     self._tab_buttons = {}
-    for index, tab in ipairs(tabs) do
-        local active = tab.mode == self.mode
-        local enabled = tab.mode ~= "public_account" or self.wp_enable
-        local width = index == #tabs and self.screen_w - cell_w or cell_w
-        local button = Button:new{
-            text = tab.text,
+    local function add_chip(text, width, selected, callback)
+        local chip = ShelfChip:new{
+            text = text,
             width = width,
-            radius = 0,
-            margin = 0,
-            bordersize = 0,
-            background = Blitbuffer.COLOR_WHITE,
-            text_font_size = 24,
-            text_font_bold = true,
-            enabled = enabled,
+            selected = selected,
             show_parent = self,
-            callback = function()
-                if enabled and not active and self.on_switch then
-                    self.on_switch(tab.mode)
-                end
-            end,
+            callback = callback,
         }
-        if enabled then self._tab_buttons[#self._tab_buttons + 1] = button end
-        table.insert(row, VerticalGroup:new{
-            align = "left",
-            button,
-            LineWidget:new{
-                dimen = Geom:new{ w = width, h = active and Screen:scaleBySize(3) or 1 },
-                background = active and Blitbuffer.COLOR_BLACK or Blitbuffer.COLOR_GRAY,
-            },
-        })
+        self._tab_buttons[#self._tab_buttons + 1] = chip
+        row[#row + 1] = chip
+    end
+    if page_count > 1 then
+        add_chip("‹", navigation_w, false, self.group_page > 1 and function()
+            self.on_group_page_changed(self.group_page - 1)
+        end or nil)
+    end
+    for index, tab in ipairs(visible) do
+        local width = index == #visible and self.screen_w - navigation_w * 2
+            - cell_w * (#visible - 1) or cell_w
+        local active = tab.kind == "all" and self.mode == "books" and not self.group_key
+            or tab.kind == "group" and self.mode == "books" and self.group_key == tab.key
+            or tab.kind == "public_account" and self.mode == "public_account"
+        add_chip(tab.text, width, active, function()
+            if tab.kind == "public_account" then
+                if self.on_switch then self.on_switch("public_account") end
+            elseif self.on_select_group then
+                self.on_select_group(tab.kind == "group" and tab.key or nil)
+            end
+        end)
+    end
+    if page_count > 1 then
+        add_chip("›", navigation_w, false, self.group_page < page_count and function()
+            self.on_group_page_changed(self.group_page + 1)
+        end or nil)
     end
     return FrameContainer:new{ bordersize = 0, padding = 0, margin = 0, row }
 end
@@ -636,6 +712,9 @@ function M.show(data, callbacks)
         title = data.title,
         wp_enable = data.wp_enable ~= false,
         books = data.books,
+        groups = data.groups,
+        group_key = data.group_key,
+        group_page = data.group_page,
         accounts = data.accounts,
         keyword = data.keyword,
         sort_label = data.sort_label,
@@ -655,6 +734,8 @@ function M.show(data, callbacks)
         on_sort = callbacks.on_sort,
         on_filter = callbacks.on_filter,
         on_select = callbacks.on_select,
+        on_select_group = callbacks.on_select_group,
+        on_group_page_changed = callbacks.on_group_page_changed,
         on_page_changed = callbacks.on_page_changed,
     }
     UIManager:show(view)

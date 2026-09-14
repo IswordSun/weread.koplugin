@@ -219,4 +219,34 @@ host:fetchVisibleShelfCovers(unsafe_view, {
 expect(#cover_requests == requests_before_unsafe_url,
     "cover loader accepted a non-HTTPS cover source")
 
+shelf_settings.view_mode = "list"
+shelf_settings.paginated = true
+host.isNetworkOnline = function() return false end
+host.bookMatchesFilters = function() return true end
+host.shelf_regular = {
+    { bookId = "one", title = "One" },
+    { bookId = "two", title = "Two" },
+    { bookId = "three", title = "Three" },
+}
+host.shelf_archives = {
+    { name = "Reading", bookIds = { "two", "one", "two", "missing" } },
+    { name = "Later", bookIds = { "three" } },
+}
+host:showShelfView("books", nil, nil, {})
+local group_view = shown[#shown]
+expect(#group_view.data.groups == 2 and group_view.data.groups[1].label == "Reading"
+        and #group_view.data.groups[1].books == 2,
+    "bookshelf did not retain the user's WeRead group")
+group_view.callbacks.on_select_group(1)
+local selected_group_view = shown[#shown]
+expect(#selected_group_view.data.books == 2
+        and selected_group_view.data.books[1].bookId == "two"
+        and selected_group_view.data.books[2].bookId == "one",
+    "user-defined group did not open its books in group order")
+selected_group_view.callbacks.on_switch("public_account")
+local public_view = shown[#shown]
+public_view.callbacks.on_switch("books")
+expect(#shown[#shown].data.books == 3,
+    "leaving a user-defined group kept its filter on all books")
+
 print(("bookshelf_pagination_spec: %d checks"):format(checks))

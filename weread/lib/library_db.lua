@@ -102,6 +102,12 @@ function LibraryDB:open()
                 PRIMARY KEY (book_id, chapter_uid)
             ) WITHOUT ROWID
         ]])
+        db:exec([[
+            CREATE TABLE IF NOT EXISTS shelf_state (
+                name    TEXT PRIMARY KEY,
+                payload TEXT NOT NULL
+            ) WITHOUT ROWID
+        ]])
         -- Adds the richer detail snapshot for databases created by an early
         -- development build. Duplicate-column errors are intentionally ignored.
         pcall(function() db:exec("ALTER TABLE books ADD COLUMN detail_payload TEXT") end)
@@ -113,6 +119,40 @@ function LibraryDB:open()
         return nil
     end
     return db
+end
+
+function LibraryDB:cacheShelfArchives(archives)
+    local payload = encode(type(archives) == "table" and archives or {})
+    if not payload then return false end
+    local db = self:open()
+    if not db then return false end
+    local stmt
+    local ok, err = pcall(function()
+        stmt = db:prepare([[
+            INSERT INTO shelf_state (name, payload) VALUES ('archives', ?)
+            ON CONFLICT(name) DO UPDATE SET payload=excluded.payload
+        ]])
+        stmt:reset():bind(payload):step()
+    end)
+    close_statement(stmt)
+    pcall(function() db:close() end)
+    if not ok then logger.warn("library_db archive write failed:", err) end
+    return ok
+end
+
+function LibraryDB:getShelfArchives()
+    local db = self:open()
+    if not db then return nil end
+    local stmt
+    local archives
+    local ok = pcall(function()
+        stmt = db:prepare("SELECT payload FROM shelf_state WHERE name='archives'")
+        local row = stmt:reset():step()
+        archives = row and decode(row[1]) or nil
+    end)
+    close_statement(stmt)
+    pcall(function() db:close() end)
+    return ok and archives or nil
 end
 
 function LibraryDB:cacheShelf(books)

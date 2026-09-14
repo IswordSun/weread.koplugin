@@ -7,6 +7,7 @@ local CoverLayout = require("weread.lib.cover_layout")
 local InputDialog = require("ui/widget/inputdialog")
 local logger = require("weread.lib.logger")
 local ProgressbarDialog = require("ui/widget/progressbardialog")
+local ShelfGroups = require("weread.lib.shelf_groups")
 local TextViewer = require("ui/widget/textviewer")
 local UIManager = require("ui/uimanager")
 local WeRead = require("weread.lib.protocol")
@@ -71,7 +72,8 @@ end
 function M:showBookshelf()
     local cached = self.library_db and self.library_db:getShelf() or nil
     if cached and #cached > 0 then
-        self:applyShelfSnapshot(cached)
+        local archives = self.library_db:getShelfArchives()
+        self:applyShelfSnapshot(cached, archives)
         self:showShelfView("books")
         return
     end
@@ -101,11 +103,13 @@ function M:onWeReadAccountChanged()
     self.shelf_regular = nil
     self.shelf_mp = nil
     self.shelf_books = nil
+    self.shelf_archives = nil
     self.shelf_search_keyword = nil
+    self.shelf_group_page = nil
     self.shelf_view_pages = nil
 end
 
-function M:applyShelfSnapshot(all_books)
+function M:applyShelfSnapshot(all_books, archives)
     local shelf = self.settings:get("shelf")
     self.shelf_filters = { reading = shelf.filter_reading, download = shelf.filter_download }
     self.shelf_regular = {}
@@ -118,6 +122,7 @@ function M:applyShelfSnapshot(all_books)
         end
     end
     self.shelf_books = self.shelf_regular
+    self.shelf_archives = type(archives) == "table" and archives or {}
 end
 
 function M:refreshBookshelf(old_view, view_options)
@@ -142,15 +147,22 @@ function M:refreshBookshelf(old_view, view_options)
             or {}
         if self.library_db then
             self.library_db:cacheShelf(all_books)
+            self.library_db:cacheShelfArchives(type(result.archive) == "table" and result.archive or {})
         end
-        self:applyShelfSnapshot(all_books)
+        self:applyShelfSnapshot(all_books, result.archive)
         self:closeBusy()
         if old_view then UIManager:close(old_view) end
+        local next_options = {}
+        for key, value in pairs(view_options or {}) do next_options[key] = value end
+        -- A refresh can reorder the user's archives. Do not reuse a stale
+        -- positional group key and accidentally open another group.
+        next_options.group_key = nil
+        next_options.prepared_shelf = nil
         self:showShelfView(
             view_options and view_options.mode or self.shelf_view_mode or "books",
             view_options and view_options.keyword or nil,
             nil,
-            view_options
+            next_options
         )
     end)
 end
@@ -335,8 +347,11 @@ function M:showShelfView(mode, keyword, old_view, options)
         end
         return result
     end
+    local groups = ShelfGroups.list(self.shelf_archives, self.shelf_regular, _("Unnamed group"))
+    local group = ShelfGroups.find(groups, options.group_key)
+    local source_books = group and group.books or self.shelf_regular
     local prepared = options.prepared_shelf
-    local books = prepared and prepared.books or filtered(self.shelf_regular, true)
+    local books = prepared and prepared.books or filtered(source_books, true)
     local accounts = prepared and prepared.accounts or filtered(self.shelf_mp, false)
     local shelf_settings = self.settings:get("shelf")
     local cover_mode = mode == "books" and shelf_settings.view_mode == "cover"
@@ -375,10 +390,13 @@ function M:showShelfView(mode, keyword, old_view, options)
     local view
     view = LibraryView.show({
         mode = mode,
-        title = options.title,
+        title = options.title or (group and group.label or nil),
         wp_enable = options.wp_enable,
         books = books,
         accounts = accounts,
+        groups = groups,
+        group_key = group and group.key or nil,
+        group_page = self.shelf_group_page or 1,
         keyword = keyword,
         sort_label = self:shelfSortSummary(),
         filter_label = self:shelfFilterSummary(),
@@ -395,7 +413,12 @@ function M:showShelfView(mode, keyword, old_view, options)
         on_switch = function(new_mode)
             local next_options = {}
             for key, value in pairs(options) do next_options[key] = value end
-            next_options.prepared_shelf = { books = books, accounts = accounts }
+            next_options.group_key = nil
+            if options.group_key then
+                next_options.prepared_shelf = nil
+            else
+                next_options.prepared_shelf = { books = books, accounts = accounts }
+            end
             next_options.page = self.shelf_view_pages[new_mode] or 1
             self:showShelfView(new_mode, keyword, view, next_options)
         end,
@@ -434,6 +457,24 @@ function M:showShelfView(mode, keyword, old_view, options)
             else
                 self:showBookRecord(book)
             end
+        end,
+        on_select_group = function(group_key)
+            local next_options = {}
+            for key, value in pairs(options) do next_options[key] = value end
+            next_options.group_key = group_key
+            next_options.prepared_shelf = nil
+            next_options.page = 1
+            self.shelf_group_page = group_key and math.ceil((group_key + 1) / 3) or 1
+            self.shelf_view_pages.books = 1
+            self:showShelfView("books", nil, view, next_options)
+        end,
+        on_group_page_changed = function(chip_page)
+            self.shelf_group_page = chip_page
+            local next_options = {}
+            for key, value in pairs(options) do next_options[key] = value end
+            next_options.prepared_shelf = { books = books, accounts = accounts }
+            next_options.page = view.page
+            self:showShelfView(mode, keyword, view, next_options)
         end,
         on_page_changed = function(new_page)
             self.shelf_view_pages[mode] = new_page

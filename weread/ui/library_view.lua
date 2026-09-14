@@ -130,17 +130,32 @@ function CachedCorner:paintTo(bb, x, y)
 end
 
 function PrivateBadge:paintTo(bb, x, y)
-    local body_width = math.max(2, math.floor(self.size * 0.7))
-    local body_height = math.max(2, math.floor(self.size * 0.48))
+    local radius = math.max(2, math.floor((self.size - 1) / 2))
+    local center_x = x + radius
+    local center_y = y + radius
+    for row = -radius, radius do
+        local half_width = math.floor(math.sqrt(radius * radius - row * row))
+        bb:paintRect(center_x - half_width, center_y + row,
+            2 * half_width + 1, 1, Blitbuffer.COLOR_BLACK)
+    end
+    local inner_radius = math.max(0, radius - 1)
+    for row = -inner_radius, inner_radius do
+        local half_width = math.floor(math.sqrt(inner_radius * inner_radius - row * row))
+        bb:paintRect(center_x - half_width, center_y + row,
+            2 * half_width + 1, 1, Blitbuffer.COLOR_WHITE)
+    end
+    local body_width = math.max(4, math.floor(self.size * 0.42))
+    local body_height = math.max(4, math.floor(self.size * 0.33))
     local body_x = x + math.floor((self.size - body_width) / 2)
-    local body_y = y + self.size - body_height
+    local body_y = y + math.floor(self.size * 0.5)
     local shackle_width = math.max(2, body_width - 2)
     local shackle_x = x + math.floor((self.size - shackle_width) / 2)
-    local shackle_height = math.max(2, self.size - body_height - 1)
+    local shackle_height = math.max(2, math.floor(self.size * 0.25))
+    local shackle_y = body_y - shackle_height
     bb:paintRect(body_x, body_y, body_width, body_height, Blitbuffer.COLOR_BLACK)
-    bb:paintRect(shackle_x, y, shackle_width, 1, Blitbuffer.COLOR_BLACK)
-    bb:paintRect(shackle_x, y + 1, 1, shackle_height, Blitbuffer.COLOR_BLACK)
-    bb:paintRect(shackle_x + shackle_width - 1, y + 1, 1, shackle_height,
+    bb:paintRect(shackle_x, shackle_y, shackle_width, 1, Blitbuffer.COLOR_BLACK)
+    bb:paintRect(shackle_x, shackle_y + 1, 1, shackle_height, Blitbuffer.COLOR_BLACK)
+    bb:paintRect(shackle_x + shackle_width - 1, shackle_y + 1, 1, shackle_height,
         Blitbuffer.COLOR_BLACK)
 end
 

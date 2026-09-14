@@ -239,14 +239,37 @@ expect(#group_view.data.groups == 2 and group_view.data.groups[1].label == "Read
     "bookshelf did not retain the user's WeRead group")
 group_view.callbacks.on_select_group("name:Reading", 1)
 local selected_group_view = shown[#shown]
-expect(#selected_group_view.data.books == 2
+expect(selected_group_view.data.mode == "groups" and #selected_group_view.data.books == 2
         and selected_group_view.data.books[1].bookId == "two"
         and selected_group_view.data.books[2].bookId == "one",
-    "user-defined group did not open its books in group order")
+    "user-defined group did not open its tab in group order")
 selected_group_view.callbacks.on_switch("public_account")
 local public_view = shown[#shown]
 public_view.callbacks.on_switch("books")
 expect(#shown[#shown].data.books == 3,
     "leaving a user-defined group kept its filter on all books")
+
+host.requireLogin = function() return true end
+host.showBusy = function() end
+host.closeBusy = function() end
+host.runOnlineTask = function(_self, _label, callback) callback() end
+host.client = {
+    get_shelf = function()
+        return {
+            books = host.shelf_regular,
+            archive = {
+                { name = "Later", bookIds = { "three" } },
+                { name = "Reading", bookIds = { "two", "one" } },
+            },
+        }
+    end,
+}
+host.library_db = { cacheShelf = function() end, cacheShelfArchives = function() end }
+selected_group_view.callbacks.on_refresh()
+local refreshed_group_view = shown[#shown]
+expect(refreshed_group_view.data.mode == "groups"
+        and refreshed_group_view.data.group_key == "name:Reading"
+        and refreshed_group_view.data.books[1].bookId == "two",
+    "refresh did not keep the active group after the server reordered groups")
 
 print(("bookshelf_pagination_spec: %d checks"):format(checks))

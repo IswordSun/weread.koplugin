@@ -104,6 +104,7 @@ function M:onWeReadAccountChanged()
     self.shelf_mp = nil
     self.shelf_books = nil
     self.shelf_archives = nil
+    self.shelf_group_key = nil
     self.shelf_search_keyword = nil
     self.shelf_group_page = nil
     self.shelf_view_pages = nil
@@ -326,7 +327,9 @@ function M:showShelfView(mode, keyword, old_view, options)
     self.shelf_cover_generation = (self.shelf_cover_generation or 0) + 1
     self.shelf_view_mode = mode
     self.shelf_search_keyword = keyword
-    self.shelf_view_pages = self.shelf_view_pages or { books = 1, public_account = 1 }
+    self.shelf_view_pages = self.shelf_view_pages or {
+        books = 1, groups = 1, public_account = 1,
+    }
     local saved_books = self.settings:get("books", {})
     local downloaded_cache = {}
     local function filtered(source, with_download_state)
@@ -350,13 +353,19 @@ function M:showShelfView(mode, keyword, old_view, options)
         _("Unnamed group"),
         _("Uncategorized")
     )
-    local group = ShelfGroups.find(groups, options.group_key)
+    local group
+    if mode == "groups" then
+        options.group_key = options.group_key or self.shelf_group_key
+        group = ShelfGroups.find(groups, options.group_key) or groups[1]
+        options.group_key = group and group.key or nil
+        self.shelf_group_key = options.group_key
+    end
     local source_books = group and group.books or self.shelf_regular
     local prepared = options.prepared_shelf
     local books = prepared and prepared.books or filtered(source_books, true)
     local accounts = prepared and prepared.accounts or filtered(self.shelf_mp, false)
     local shelf_settings = self.settings:get("shelf")
-    local cover_mode = mode == "books" and shelf_settings.view_mode == "cover"
+    local cover_mode = mode ~= "public_account" and shelf_settings.view_mode == "cover"
     local paged = cover_mode or shelf_settings.paginated ~= false
     local page = paged and (options.page or self.shelf_view_pages[mode] or 1) or 1
     local cover_layout
@@ -415,12 +424,8 @@ function M:showShelfView(mode, keyword, old_view, options)
         on_switch = function(new_mode)
             local next_options = {}
             for key, value in pairs(options) do next_options[key] = value end
-            next_options.group_key = nil
-            if options.group_key then
-                next_options.prepared_shelf = nil
-            else
-                next_options.prepared_shelf = { books = books, accounts = accounts }
-            end
+            next_options.group_key = new_mode == "groups" and self.shelf_group_key or nil
+            next_options.prepared_shelf = nil
             next_options.page = self.shelf_view_pages[new_mode] or 1
             self:showShelfView(new_mode, keyword, view, next_options)
         end,
@@ -428,7 +433,7 @@ function M:showShelfView(mode, keyword, old_view, options)
             self:showShelfSearchDialog(view, mode, keyword, options)
         end,
         on_refresh = function()
-            self.shelf_view_pages = { books = 1, public_account = 1 }
+            self.shelf_view_pages = { books = 1, groups = 1, public_account = 1 }
             local refresh_options = {}
             for key, value in pairs(options) do refresh_options[key] = value end
             refresh_options.prepared_shelf = nil
@@ -437,7 +442,7 @@ function M:showShelfView(mode, keyword, old_view, options)
         end,
         on_sort = function()
             self:showShelfSortOptions(function()
-                self.shelf_view_pages = { books = 1, public_account = 1 }
+                self.shelf_view_pages = { books = 1, groups = 1, public_account = 1 }
                 options.prepared_shelf = nil
                 options.page = 1
                 self:showShelfView(mode, keyword, view, options)
@@ -445,7 +450,7 @@ function M:showShelfView(mode, keyword, old_view, options)
         end,
         on_filter = function()
             self:showShelfFilterOptions(function()
-                self.shelf_view_pages = { books = 1, public_account = 1 }
+                self.shelf_view_pages = { books = 1, groups = 1, public_account = 1 }
                 options.prepared_shelf = nil
                 options.page = 1
                 self:showShelfView(mode, keyword, view, options)
@@ -467,8 +472,9 @@ function M:showShelfView(mode, keyword, old_view, options)
             next_options.prepared_shelf = nil
             next_options.page = 1
             self.shelf_group_page = group_page or 1
-            self.shelf_view_pages.books = 1
-            self:showShelfView("books", nil, view, next_options)
+            self.shelf_group_key = group_key
+            self.shelf_view_pages.groups = 1
+            self:showShelfView("groups", nil, view, next_options)
         end,
         on_group_page_changed = function(chip_page)
             self.shelf_group_page = chip_page

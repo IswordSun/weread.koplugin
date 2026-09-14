@@ -338,10 +338,37 @@ local LibraryView = FocusManager:extend{
 }
 
 function LibraryView:tabBar()
-    local tabs = { { kind = "all", text = _("All books") } }
-    for _, group in ipairs(self.groups or {}) do
-        tabs[#tabs + 1] = { kind = "group", text = group.label, key = group.key }
+    local tabs = {
+        { mode = "books", text = _("All books") },
+        { mode = "groups", text = _("Book groups") },
+        { mode = "public_account", text = _("Public Accounts") },
+    }
+    local width = math.floor(self.screen_w / #tabs)
+    local row = HorizontalGroup:new{}
+    self._tab_buttons = {}
+    for index, tab in ipairs(tabs) do
+        local tab_width = index == #tabs and self.screen_w - width * (#tabs - 1) or width
+        local chip = ShelfChip:new{
+            text = tab.text,
+            width = tab_width,
+            selected = self.mode == tab.mode,
+            show_parent = self,
+            callback = function()
+                if self.mode ~= tab.mode and self.on_switch then self.on_switch(tab.mode) end
+            end,
+        }
+        self._tab_buttons[#self._tab_buttons + 1] = chip
+        row[#row + 1] = chip
     end
+    return FrameContainer:new{ bordersize = 0, padding = 0, margin = 0, row }
+end
+
+function LibraryView:groupBar()
+    local tabs = {}
+    for _, group in ipairs(self.groups or {}) do
+        tabs[#tabs + 1] = { text = group.label, key = group.key }
+    end
+    if #tabs == 0 then return nil end
 
     local function chip_width(text, limit)
         local label = TextWidget:new{ text = text, face = Font:getFace("cfont", 17) }
@@ -377,7 +404,7 @@ function LibraryView:tabBar()
     self.group_page = math.max(1, math.min(tonumber(self.group_page) or 1, page_count))
     local visible = pages[self.group_page]
     local row = HorizontalGroup:new{}
-    self._tab_buttons = {}
+    self._group_buttons = {}
     local function add_chip(text, width, selected, callback)
         local chip = ShelfChip:new{
             text = text,
@@ -386,7 +413,7 @@ function LibraryView:tabBar()
             show_parent = self,
             callback = callback,
         }
-        self._tab_buttons[#self._tab_buttons + 1] = chip
+        self._group_buttons[#self._group_buttons + 1] = chip
         row[#row + 1] = chip
     end
     if page_count > 1 then
@@ -396,11 +423,10 @@ function LibraryView:tabBar()
     end
     for _, entry in ipairs(visible) do
         local tab = entry.tab
-        local active = tab.kind == "all" and self.mode == "books" and not self.group_key
-            or tab.kind == "group" and self.mode == "books" and self.group_key == tab.key
+        local active = self.group_key == tab.key
         add_chip(tab.text, entry.width, active, function()
             if self.on_select_group then
-                self.on_select_group(tab.kind == "group" and tab.key or nil, self.group_page)
+                self.on_select_group(tab.key, self.group_page)
             end
         end)
     end
@@ -413,9 +439,8 @@ function LibraryView:tabBar()
 end
 
 function LibraryView:actionBar()
-    local portal_w = self.wp_enable and math.floor(self.screen_w * 0.22) or 0
-    local primary_cell_w = math.floor((self.screen_w - portal_w) / 2)
-    local secondary_cell_w = math.floor(self.screen_w / 2)
+    local primary_cell_w = math.floor(self.screen_w / 2)
+    local secondary_cell_w = primary_cell_w
     local search_label = self.keyword and self.keyword ~= ""
         and T(_("⌕ Search: %1"), self.keyword) or _("⌕ Search shelf")
     local filter_label = self.filter_label and self.filter_label ~= _("All")
@@ -432,7 +457,7 @@ function LibraryView:actionBar()
     }
     local refresh_button = Button:new{
         text = _("↻ Get latest"),
-        width = self.screen_w - portal_w - primary_cell_w,
+        width = self.screen_w - primary_cell_w,
         radius = 0, margin = 0, bordersize = 0,
         text_font_bold = false,
         show_parent = self,
@@ -440,29 +465,13 @@ function LibraryView:actionBar()
     }
     local primary = HorizontalGroup:new{}
     self._action_primary = {}
-    if self.wp_enable then
-        local public_button = Button:new{
-            text = self.mode == "public_account" and _("Books") or _("Public Accounts"),
-            width = portal_w,
-            radius = 0, margin = 0, bordersize = 0,
-            text_font_bold = false,
-            show_parent = self,
-            callback = function()
-                if self.on_switch then
-                    self.on_switch(self.mode == "public_account" and "books" or "public_account")
-                end
-            end,
-        }
-        primary[#primary + 1] = public_button
-        self._action_primary[#self._action_primary + 1] = public_button
-    end
     primary[#primary + 1] = search_button
     primary[#primary + 1] = refresh_button
     self._action_primary[#self._action_primary + 1] = search_button
     self._action_primary[#self._action_primary + 1] = refresh_button
     local sort_button = Button:new{
             text = sort_label,
-            width = self.mode == "books" and secondary_cell_w or self.screen_w,
+            width = self.mode ~= "public_account" and secondary_cell_w or self.screen_w,
             radius = 0, margin = 0, bordersize = 0,
             text_font_bold = false,
             show_parent = self,
@@ -470,7 +479,7 @@ function LibraryView:actionBar()
         }
     local secondary = HorizontalGroup:new{ sort_button }
     local filter_button
-    if self.mode == "books" then
+    if self.mode ~= "public_account" then
         filter_button = Button:new{
             text = filter_label,
             width = self.screen_w - secondary_cell_w,
@@ -507,7 +516,7 @@ function LibraryView:preparePagination()
     local source = self.mode == "public_account"
         and (self.accounts or {}) or (self.books or {})
     self.page_size = math.max(1, math.floor(tonumber(self.page_size) or 10))
-    if self.cover_mode and self.mode == "books" then
+    if self.cover_mode and self.mode ~= "public_account" then
         local columns = math.max(1, math.floor(tonumber(self.cover_columns) or 3))
         local rows = math.max(1, math.floor(tonumber(self.cover_rows) or 2))
         self.page_size = columns * rows
@@ -545,7 +554,7 @@ function LibraryView:content()
         first = (self.page - 1) * self.page_size + 1
         last = math.min(#source, first + self.page_size - 1)
     end
-    if self.cover_mode and self.mode == "books" then
+    if self.cover_mode and self.mode ~= "public_account" then
         local columns = math.max(1, math.floor(tonumber(self.cover_columns) or 3))
         local rows = math.max(1, math.floor(tonumber(self.cover_rows) or 2))
         local cell_width = math.floor(self.content_width / columns)
@@ -669,13 +678,15 @@ function LibraryView:init()
         show_parent = self,
     }
     local tabs = self:tabBar()
+    local group_tabs = self.mode == "groups" and self:groupBar() or nil
     local actions = self:actionBar()
     self:preparePagination()
     local page_bar = self:pageBar()
     local scroll_h = math.max(1, self.screen_h - self.title_bar:getHeight()
         - tabs:getSize().h - actions:getSize().h
+        - (group_tabs and group_tabs:getSize().h or 0)
         - (page_bar and page_bar:getSize().h or 0))
-    if self.cover_mode and self.mode == "books" then
+    if self.cover_mode and self.mode ~= "public_account" then
         local rows = math.max(1, math.floor(tonumber(self.cover_rows) or 2))
         self.cover_content_height = scroll_h
         self.cover_cell_height = math.max(1, math.floor(scroll_h / rows))
@@ -688,14 +699,17 @@ function LibraryView:init()
     }
     local rows = {
         self._tab_buttons,
-        self._action_secondary,
-        self._action_primary,
     }
+    if self._group_buttons then rows[#rows + 1] = self._group_buttons end
+    rows[#rows + 1] = self._action_secondary
+    rows[#rows + 1] = self._action_primary
+    local static_rows = #rows
     for _i, item_row in ipairs(self._focus_item_rows) do
         rows[#rows + 1] = item_row
     end
     local outside_scroll = {}
     for _i, button in ipairs(self._tab_buttons) do outside_scroll[button] = true end
+    for _i, button in ipairs(self._group_buttons or {}) do outside_scroll[button] = true end
     for _i, button in ipairs(self._action_secondary) do outside_scroll[button] = true end
     for _i, button in ipairs(self._action_primary) do outside_scroll[button] = true end
     if self._page_buttons then
@@ -703,16 +717,18 @@ function LibraryView:init()
         for _i, button in ipairs(self._page_buttons) do outside_scroll[button] = true end
     end
     FocusNav.apply(self, rows, { scroll = scroll, outside_scroll = outside_scroll })
-    -- Items follow the three fixed rows (tabs, secondary, primary actions).
-    FocusNav.initialFocus(self, 1, #rows > 3 and 4 or 1)
+    -- Items follow the fixed tabs, optional group row, and action rows.
+    FocusNav.initialFocus(self, 1, #rows > static_rows and static_rows + 1 or 1)
+    local layout = VerticalGroup:new{ align = "left", self.title_bar, tabs }
+    if group_tabs then layout[#layout + 1] = group_tabs end
+    layout[#layout + 1] = actions
+    layout[#layout + 1] = scroll
+    layout[#layout + 1] = page_bar or VerticalSpan:new{ width = 0 }
     self[1] = FrameContainer:new{
         background = Blitbuffer.COLOR_WHITE,
         bordersize = 0, padding = 0, margin = 0,
         dimen = self.dimen:copy(),
-        VerticalGroup:new{
-            align = "left", self.title_bar, tabs, actions, scroll,
-            page_bar or VerticalSpan:new{ width = 0 },
-        },
+        layout,
     }
     if self.paged and Device:hasKeys() then
         self.onNextPage = function(view)

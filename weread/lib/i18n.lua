@@ -248,6 +248,7 @@ local zh = {
     ["Untitled"] = "未命名",
     ["No cover"] = "暂无封面",
     ["Cover loading"] = "封面加载中",
+    ["Private"] = "私密",
     ["Done"] = "已读完",
     ["WeRead Bookshelf"] = "微信读书书架",
     ["Your WeRead shelf is empty."] = "微信读书书架为空。",

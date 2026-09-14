@@ -35,7 +35,16 @@ local CachedCorner = Widget:extend{
     size = 0,
 }
 
+local PrivateBadge = Widget:extend{
+    size = 0,
+}
+
 function CachedCorner:init()
+    self.size = math.max(1, math.floor(tonumber(self.size) or 1))
+    self.dimen = Geom:new{ w = self.size, h = self.size }
+end
+
+function PrivateBadge:init()
     self.size = math.max(1, math.floor(tonumber(self.size) or 1))
     self.dimen = Geom:new{ w = self.size, h = self.size }
 end
@@ -118,6 +127,26 @@ function CachedCorner:paintTo(bb, x, y)
         local width = self.size - row
         bb:paintRect(x + row, y + row, width, 1, Blitbuffer.COLOR_BLACK)
     end
+end
+
+function PrivateBadge:paintTo(bb, x, y)
+    local body_width = math.max(2, math.floor(self.size * 0.7))
+    local body_height = math.max(2, math.floor(self.size * 0.48))
+    local body_x = x + math.floor((self.size - body_width) / 2)
+    local body_y = y + self.size - body_height
+    local shackle_width = math.max(2, body_width - 2)
+    local shackle_x = x + math.floor((self.size - shackle_width) / 2)
+    local shackle_height = math.max(2, self.size - body_height - 1)
+    bb:paintRect(body_x, body_y, body_width, body_height, Blitbuffer.COLOR_BLACK)
+    bb:paintRect(shackle_x, y, shackle_width, 1, Blitbuffer.COLOR_BLACK)
+    bb:paintRect(shackle_x, y + 1, 1, shackle_height, Blitbuffer.COLOR_BLACK)
+    bb:paintRect(shackle_x + shackle_width - 1, y + 1, 1, shackle_height,
+        Blitbuffer.COLOR_BLACK)
+end
+
+local function is_private_book(book)
+    local secret = book and book.secret
+    return secret == 1 or secret == true or secret == "1"
 end
 
 local ShelfRow = InputContainer:extend{
@@ -274,6 +303,18 @@ function CoverCell:init()
         corner.overlap_offset = { cover_width - corner_size, 0 }
         cover_layers[#cover_layers + 1] = corner
         self._cached_corner_size = corner_size
+    end
+    self._has_private_badge = is_private_book(self.book)
+    if self._has_private_badge then
+        local badge_size = math.max(1, math.min(
+            cover_width,
+            cover_height,
+            Screen:scaleBySize(18)
+        ))
+        local badge = PrivateBadge:new{ size = badge_size }
+        badge.overlap_offset = { 0, cover_height - badge_size }
+        cover_layers[#cover_layers + 1] = badge
+        self._private_badge_size = badge_size
     end
     local cover = OverlapGroup:new(cover_layers)
     local title = self.book.title or self.book.bookId or self.book.book_id or _("Untitled")
@@ -528,6 +569,9 @@ function LibraryView:itemStatus(book)
         status = os.date("%Y-%m-%d", book.readUpdateTime)
     elseif book.finishReading == 1 then
         status = _("Done")
+    end
+    if is_private_book(book) then
+        status = status ~= "" and (_("Private") .. " · " .. status) or _("Private")
     end
     if book._cached then
         status = status ~= "" and ("✓  " .. status) or "✓"

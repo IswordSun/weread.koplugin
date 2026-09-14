@@ -262,6 +262,7 @@ expect(large_view.page_count == 100 and #large_view._item_rows == 10,
     "large bookshelf created more than one page of row widgets")
 
 books[1]._cached = true
+books[1].secret = 1
 local cover_paths = { [books[1]] = "/covers/one.jpg" }
 local cover_view = LibraryView.show({
     mode = "books", books = books, accounts = {},
@@ -283,6 +284,13 @@ expect(cover_view._item_rows[1]._has_cached_corner == true
         and cover_view._item_rows[1]._cached_corner_size == 16
         and cover_view._item_rows[2]._has_cached_corner == false,
     "cover bookshelf cached corner did not follow download state")
+expect(cover_view._item_rows[1]._has_private_badge == true
+        and cover_view._item_rows[1]._private_badge_size == 18
+        and cover_view._item_rows[2]._has_private_badge == false,
+    "cover bookshelf private badge did not follow the private-reading flag")
+expect(cover_view:itemStatus({ secret = 1 }) == "Private"
+        and cover_view:itemStatus({ secret = 0 }) == "",
+    "bookshelf list status did not identify private reading")
 expect(cover_view._item_rows[1].width == 200
         and cover_view._item_rows[3].width == 200,
     "cover bookshelf columns did not fill the complete screen width")

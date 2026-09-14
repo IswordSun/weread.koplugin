@@ -281,7 +281,7 @@ expect(cover_view._item_rows[1]._has_cover == true
 expect(cover_view._item_rows[1].status == nil,
     "cover bookshelf retained date or cache status metadata")
 expect(cover_view._item_rows[1]._has_cached_corner == true
-        and cover_view._item_rows[1]._cached_corner_size == 16
+        and cover_view._item_rows[1]._cached_corner_size == 18
         and cover_view._item_rows[2]._has_cached_corner == false,
     "cover bookshelf cached corner did not follow download state")
 expect(cover_view._item_rows[1]._has_private_badge == true

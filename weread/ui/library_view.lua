@@ -52,7 +52,10 @@ local ShadowFrame = FrameContainer:extend{ shadow_offset = 0 }
 function ShadowFrame:paintTo(bb, x, y)
     local offset = math.max(0, math.floor(tonumber(self.shadow_offset) or 0))
     if offset > 0 then
-        bb:paintRect(x + offset, y + offset, self.dimen.w, self.dimen.h,
+        local size = self:getSize()
+        local width = self.width or size.w
+        local height = self.height or size.h
+        bb:paintRect(x + offset, y + offset, width, height,
             Blitbuffer.COLOR_LIGHT_GRAY)
     end
     FrameContainer.paintTo(self, bb, x, y)

@@ -33,6 +33,10 @@ function Widget:getHeight()
     return self:getSize().h
 end
 
+function Widget:paintTo(bb, x, y)
+    if self[1] and self[1].paintTo then self[1]:paintTo(bb, x, y) end
+end
+
 local function widget_module()
     return Widget:extend{}
 end
@@ -40,7 +44,7 @@ end
 local shown = {}
 local has_keys = false
 package.preload["ffi/blitbuffer"] = function()
-    return { COLOR_WHITE = 0, COLOR_BLACK = 1, COLOR_GRAY = 2 }
+    return { COLOR_WHITE = 0, COLOR_BLACK = 1, COLOR_GRAY = 2, COLOR_LIGHT_GRAY = 3 }
 end
 package.preload["ffi/util"] = function()
     return {
@@ -113,7 +117,6 @@ for _, name in ipairs({
     "ui/gesturerange",
     "ui/widget/button",
     "ui/widget/container/centercontainer",
-    "ui/widget/container/framecontainer",
     "ui/widget/container/inputcontainer",
     "ui/widget/container/scrollablecontainer",
     "ui/widget/horizontalgroup",
@@ -127,6 +130,16 @@ for _, name in ipairs({
     "ui/widget/widget",
 }) do
     package.preload[name] = widget_module
+end
+package.preload["ui/widget/container/framecontainer"] = function()
+    local FrameContainer = widget_module()
+    function FrameContainer:paintTo(bb, x, y)
+        local size = self:getSize()
+        self.dimen = self.dimen or { w = size.w, h = size.h }
+        self.dimen.x, self.dimen.y = x, y
+        if self[1] and self[1].paintTo then self[1]:paintTo(bb, x, y) end
+    end
+    return FrameContainer
 end
 
 package.preload["weread.lib.i18n"] = function()
@@ -277,6 +290,16 @@ expect(cover_view._item_rows[1].height == cover_view.cover_cell_height
         and cover_view._item_rows[4].height
             == cover_view.cover_content_height - cover_view.cover_cell_height,
     "cover bookshelf rows did not fill the available content height")
+local shadow_paints = 0
+local paint_bb = {
+    paintRect = function() shadow_paints = shadow_paints + 1 end,
+}
+ok, error_message = pcall(function()
+    cover_view._item_rows[1]:paintTo(paint_bb, 0, 0)
+end)
+expect(ok and shadow_paints == 1,
+    "cover card shadow failed before FrameContainer initialized its geometry: "
+        .. tostring(error_message))
 
 local invalid_page_size_view = LibraryView.show({
     mode = "books", books = books, accounts = {},

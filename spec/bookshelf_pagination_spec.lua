@@ -237,7 +237,7 @@ local group_view = shown[#shown]
 expect(#group_view.data.groups == 2 and group_view.data.groups[1].label == "Reading"
         and #group_view.data.groups[1].books == 2,
     "bookshelf did not retain the user's WeRead group")
-group_view.callbacks.on_select_group(1)
+group_view.callbacks.on_select_group("name:Reading", 1)
 local selected_group_view = shown[#shown]
 expect(#selected_group_view.data.books == 2
         and selected_group_view.data.books[1].bookId == "two"

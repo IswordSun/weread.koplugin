@@ -154,9 +154,6 @@ function M:refreshBookshelf(old_view, view_options)
         if old_view then UIManager:close(old_view) end
         local next_options = {}
         for key, value in pairs(view_options or {}) do next_options[key] = value end
-        -- A refresh can reorder the user's archives. Do not reuse a stale
-        -- positional group key and accidentally open another group.
-        next_options.group_key = nil
         next_options.prepared_shelf = nil
         self:showShelfView(
             view_options and view_options.mode or self.shelf_view_mode or "books",
@@ -347,7 +344,12 @@ function M:showShelfView(mode, keyword, old_view, options)
         end
         return result
     end
-    local groups = ShelfGroups.list(self.shelf_archives, self.shelf_regular, _("Unnamed group"))
+    local groups = ShelfGroups.list(
+        self.shelf_archives,
+        self.shelf_regular,
+        _("Unnamed group"),
+        _("Uncategorized")
+    )
     local group = ShelfGroups.find(groups, options.group_key)
     local source_books = group and group.books or self.shelf_regular
     local prepared = options.prepared_shelf
@@ -458,13 +460,13 @@ function M:showShelfView(mode, keyword, old_view, options)
                 self:showBookRecord(book)
             end
         end,
-        on_select_group = function(group_key)
+        on_select_group = function(group_key, group_page)
             local next_options = {}
             for key, value in pairs(options) do next_options[key] = value end
             next_options.group_key = group_key
             next_options.prepared_shelf = nil
             next_options.page = 1
-            self.shelf_group_page = group_key and math.ceil((group_key + 1) / 3) or 1
+            self.shelf_group_page = group_page or 1
             self.shelf_view_pages.books = 1
             self:showShelfView("books", nil, view, next_options)
         end,

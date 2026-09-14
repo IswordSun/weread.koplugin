@@ -342,18 +342,40 @@ function LibraryView:tabBar()
     for _, group in ipairs(self.groups or {}) do
         tabs[#tabs + 1] = { kind = "group", text = group.label, key = group.key }
     end
-    if self.wp_enable then
-        tabs[#tabs + 1] = { kind = "public_account", text = _("Public Accounts") }
+
+    local function chip_width(text, limit)
+        local label = TextWidget:new{ text = text, face = Font:getFace("cfont", 17) }
+        local padding = 2 * (Size.padding.default + Size.border.thin)
+        return math.max(
+            Screen:scaleBySize(76),
+            math.min(limit, math.ceil(label:getSize().w + padding))
+        )
     end
-    local per_page = 3
-    local page_count = math.max(1, math.ceil(#tabs / per_page))
+
+    local function pack_tabs(width)
+        local pages, page, used = {}, {}, 0
+        for _, tab in ipairs(tabs) do
+            local width_for_tab = chip_width(tab.text, width)
+            if #page > 0 and used + width_for_tab > width then
+                pages[#pages + 1] = page
+                page, used = {}, 0
+            end
+            page[#page + 1] = { tab = tab, width = width_for_tab }
+            used = used + width_for_tab
+        end
+        pages[#pages + 1] = page
+        return pages
+    end
+
+    local pages = pack_tabs(self.screen_w)
+    local navigation_w = 0
+    if #pages > 1 then
+        navigation_w = Screen:scaleBySize(34)
+        pages = pack_tabs(self.screen_w - navigation_w * 2)
+    end
+    local page_count = #pages
     self.group_page = math.max(1, math.min(tonumber(self.group_page) or 1, page_count))
-    local first = (self.group_page - 1) * per_page + 1
-    local last = math.min(#tabs, first + per_page - 1)
-    local visible = {}
-    for index = first, last do visible[#visible + 1] = tabs[index] end
-    local navigation_w = page_count > 1 and Screen:scaleBySize(34) or 0
-    local cell_w = math.floor((self.screen_w - navigation_w * 2) / math.max(1, #visible))
+    local visible = pages[self.group_page]
     local row = HorizontalGroup:new{}
     self._tab_buttons = {}
     local function add_chip(text, width, selected, callback)
@@ -372,17 +394,13 @@ function LibraryView:tabBar()
             self.on_group_page_changed(self.group_page - 1)
         end or nil)
     end
-    for index, tab in ipairs(visible) do
-        local width = index == #visible and self.screen_w - navigation_w * 2
-            - cell_w * (#visible - 1) or cell_w
+    for _, entry in ipairs(visible) do
+        local tab = entry.tab
         local active = tab.kind == "all" and self.mode == "books" and not self.group_key
             or tab.kind == "group" and self.mode == "books" and self.group_key == tab.key
-            or tab.kind == "public_account" and self.mode == "public_account"
-        add_chip(tab.text, width, active, function()
-            if tab.kind == "public_account" then
-                if self.on_switch then self.on_switch("public_account") end
-            elseif self.on_select_group then
-                self.on_select_group(tab.kind == "group" and tab.key or nil)
+        add_chip(tab.text, entry.width, active, function()
+            if self.on_select_group then
+                self.on_select_group(tab.kind == "group" and tab.key or nil, self.group_page)
             end
         end)
     end
@@ -395,7 +413,9 @@ function LibraryView:tabBar()
 end
 
 function LibraryView:actionBar()
-    local cell_w = math.floor(self.screen_w / 2)
+    local portal_w = self.wp_enable and math.floor(self.screen_w * 0.22) or 0
+    local primary_cell_w = math.floor((self.screen_w - portal_w) / 2)
+    local secondary_cell_w = math.floor(self.screen_w / 2)
     local search_label = self.keyword and self.keyword ~= ""
         and T(_("⌕ Search: %1"), self.keyword) or _("⌕ Search shelf")
     local filter_label = self.filter_label and self.filter_label ~= _("All")
@@ -404,7 +424,7 @@ function LibraryView:actionBar()
         and T(_("⇅ Sort: %1"), self.sort_label) or _("⇅ Sort")
     local search_button = Button:new{
         text = search_label,
-        width = cell_w,
+        width = primary_cell_w,
         radius = 0, margin = 0, bordersize = 0,
         text_font_bold = false,
         show_parent = self,
@@ -412,16 +432,37 @@ function LibraryView:actionBar()
     }
     local refresh_button = Button:new{
         text = _("↻ Get latest"),
-        width = self.screen_w - cell_w,
+        width = self.screen_w - portal_w - primary_cell_w,
         radius = 0, margin = 0, bordersize = 0,
         text_font_bold = false,
         show_parent = self,
         callback = function() if self.on_refresh then self.on_refresh() end end,
     }
-    local primary = HorizontalGroup:new{ search_button, refresh_button }
+    local primary = HorizontalGroup:new{}
+    self._action_primary = {}
+    if self.wp_enable then
+        local public_button = Button:new{
+            text = self.mode == "public_account" and _("Books") or _("Public Accounts"),
+            width = portal_w,
+            radius = 0, margin = 0, bordersize = 0,
+            text_font_bold = false,
+            show_parent = self,
+            callback = function()
+                if self.on_switch then
+                    self.on_switch(self.mode == "public_account" and "books" or "public_account")
+                end
+            end,
+        }
+        primary[#primary + 1] = public_button
+        self._action_primary[#self._action_primary + 1] = public_button
+    end
+    primary[#primary + 1] = search_button
+    primary[#primary + 1] = refresh_button
+    self._action_primary[#self._action_primary + 1] = search_button
+    self._action_primary[#self._action_primary + 1] = refresh_button
     local sort_button = Button:new{
             text = sort_label,
-            width = self.mode == "books" and cell_w or self.screen_w,
+            width = self.mode == "books" and secondary_cell_w or self.screen_w,
             radius = 0, margin = 0, bordersize = 0,
             text_font_bold = false,
             show_parent = self,
@@ -432,7 +473,7 @@ function LibraryView:actionBar()
     if self.mode == "books" then
         filter_button = Button:new{
             text = filter_label,
-            width = self.screen_w - cell_w,
+            width = self.screen_w - secondary_cell_w,
             radius = 0, margin = 0, bordersize = 0,
             text_font_bold = false,
             show_parent = self,
@@ -442,7 +483,6 @@ function LibraryView:actionBar()
     end
     self._action_secondary = { sort_button }
     if filter_button then self._action_secondary[#self._action_secondary + 1] = filter_button end
-    self._action_primary = { search_button, refresh_button }
     return FrameContainer:new{
         bordersize = 0, padding = 0, margin = 0,
         VerticalGroup:new{ align = "left", secondary, primary },

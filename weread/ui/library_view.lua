@@ -207,15 +207,12 @@ function CoverCell:init()
     local padding = Size.padding.small
     local border = Size.border.thin
     local cover_width = math.max(1, self.width - 2 * outer_padding - shadow_offset)
-    local card_height = math.max(1, self.height - shadow_offset)
     local label_height = math.min(
-        math.max(1, math.floor(card_height * 0.22)),
+        math.max(1, math.floor(self.height * 0.22)),
         Screen:scaleBySize(38)
     )
-    local inner_width = math.max(1, cover_width - 2 * (padding + border))
-    local inner_height = math.max(1, card_height - 2 * (padding + border))
-    local cover_height = math.max(1, inner_height - label_height)
-    local image_width = math.max(1, inner_width - 2 * padding - 2 * border)
+    local cover_height = math.max(1, self.height - label_height - shadow_offset)
+    local image_width = math.max(1, cover_width - 2 * padding - 2 * border)
     local image_height = math.max(1, cover_height - 2 * padding - 2 * border)
     local cover_content
     if self.cover_path then
@@ -248,35 +245,33 @@ function CoverCell:init()
         }
         self._has_cover = false
     end
-    local cover_frame = CenterContainer:new{
-        dimen = Geom:new{ w = inner_width, h = cover_height },
-        FrameContainer:new{
-            width = inner_width,
-            height = cover_height,
-            margin = 0,
-            padding = padding,
-            bordersize = border,
-            radius = CARD_RADIUS,
-            background = Blitbuffer.COLOR_WHITE,
-            CenterContainer:new{
-                dimen = Geom:new{ w = image_width, h = image_height },
-                cover_content,
-            },
+    local cover_card = ShadowFrame:new{
+        width = cover_width,
+        height = cover_height,
+        margin = 0,
+        padding = padding,
+        bordersize = border,
+        radius = CARD_RADIUS,
+        background = Blitbuffer.COLOR_WHITE,
+        shadow_offset = shadow_offset,
+        CenterContainer:new{
+            dimen = Geom:new{ w = image_width, h = image_height },
+            cover_content,
         },
     }
     local cover_layers = {
-        dimen = Geom:new{ w = inner_width, h = cover_height },
-        cover_frame,
+        dimen = Geom:new{ w = cover_width + shadow_offset, h = cover_height + shadow_offset },
+        cover_card,
     }
     self._has_cached_corner = self.cached == true
     if self._has_cached_corner then
         local corner_size = math.max(1, math.min(
-            inner_width,
+            cover_width,
             cover_height,
             Screen:scaleBySize(16)
         ))
         local corner = CachedCorner:new{ size = corner_size }
-        corner.overlap_offset = { inner_width - corner_size, 0 }
+        corner.overlap_offset = { cover_width - corner_size, 0 }
         cover_layers[#cover_layers + 1] = corner
         self._cached_corner_size = corner_size
     end
@@ -286,20 +281,17 @@ function CoverCell:init()
         text = title,
         face = Font:getFace("cfont", 16),
         bold = true,
-        max_width = inner_width,
+        max_width = cover_width,
     }
-    self.frame = ShadowFrame:new{
-        width = cover_width,
-        height = card_height,
-        bordersize = border,
-        radius = CARD_RADIUS,
+    self.frame = FrameContainer:new{
+        bordersize = 0,
+        radius = 0,
         margin = 0,
-        padding = padding,
+        padding = 0,
         background = Blitbuffer.COLOR_WHITE,
-        shadow_offset = shadow_offset,
         show_parent = self.show_parent,
         CenterContainer:new{
-            dimen = Geom:new{ w = inner_width, h = inner_height },
+            dimen = Geom:new{ w = self.width, h = self.height },
             VerticalGroup:new{
                 align = "center",
                 cover,
@@ -307,11 +299,8 @@ function CoverCell:init()
             },
         },
     }
-    self[1] = CenterContainer:new{
-        dimen = Geom:new{ w = self.width, h = self.height },
-        self.frame,
-    }
-    self.dimen = self[1]:getSize()
+    self[1] = self.frame
+    self.dimen = self.frame:getSize()
     self.ges_events = {
         TapCoverCell = {
             GestureRange:new{ ges = "tap", range = self.dimen },

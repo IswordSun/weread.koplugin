@@ -56,6 +56,7 @@ local fake_cover_cache = {
         return cached_covers[book]
     end,
     prune = function() return 0 end,
+    sourcePathFor = function() return nil end,
 }
 package.preload["weread.lib.cover_cache"] = function()
     return {
@@ -271,5 +272,29 @@ expect(refreshed_group_view.data.mode == "groups"
         and refreshed_group_view.data.group_key == "name:Reading"
         and refreshed_group_view.data.books[1].bookId == "two",
     "refresh did not keep the active group after the server reordered groups")
+
+-- Loading covers from a group must redraw that group, rather than falling
+-- back to the ordinary bookshelf when the background batch completes.
+shelf_settings.view_mode = "cover"
+host.isNetworkOnline = function() return true end
+host.client.get_binary = function(_self, url, options)
+    cover_requests[#cover_requests + 1] = { url = url, options = options }
+    return "\255\216\255cover"
+end
+host.shelf_regular = {
+    { bookId = "group-one", title = "Group One", cover = "https://cdn.example/group-one" },
+    { bookId = "group-two", title = "Group Two", cover = "https://cdn.example/group-two" },
+}
+host.shelf_archives = {
+    { archiveId = 12, name = "Reading", bookIds = { "group-one", "group-two" } },
+}
+host.shelf_group_key = "archive:12"
+host:showShelfView("groups", nil, nil, { group_key = "archive:12" })
+expect(shown[#shown].data.mode == "groups" and shown[#shown].data.group_key == "archive:12"
+        and shown[#shown].data.cover_paths[host.shelf_regular[1]] ~= nil,
+    "cover batch returned a user-defined group to the ordinary bookshelf: shown="
+        .. tostring(#shown) .. " mode=" .. tostring(shown[#shown].data.mode)
+        .. " key=" .. tostring(shown[#shown].data.group_key)
+        .. " cover=" .. tostring(shown[#shown].data.cover_paths[host.shelf_regular[1]]))
 
 print(("bookshelf_pagination_spec: %d checks"):format(checks))

@@ -246,7 +246,10 @@ function M:fetchVisibleShelfCovers(view, books, options)
             }
             next_options.page = view.page
             next_options.skip_cover_fetch_once = true
-            self:showShelfView("books", self.shelf_search_keyword, view, next_options)
+            -- Covers can also be fetched from a user-defined group. Reopen the
+            -- same tab after the background batch, rather than falling back to
+            -- the ordinary bookshelf.
+            self:showShelfView(options.mode or "books", options.keyword, view, next_options)
         end
         local pending = self.shelf_cover_pending
         self.shelf_cover_pending = nil
@@ -514,7 +517,7 @@ function M:showShelfSearchDialog(view, mode, keyword, options)
                 text = _("Clear"),
                 callback = self:safeCallback(_("Clear"), function()
                     UIManager:close(dialog)
-                    self.shelf_view_pages = { books = 1, public_account = 1 }
+                    self.shelf_view_pages = { books = 1, groups = 1, public_account = 1 }
                     options.prepared_shelf = nil
                     options.page = 1
                     self:showShelfView(mode, nil, view, options)
@@ -526,7 +529,7 @@ function M:showShelfSearchDialog(view, mode, keyword, options)
                 callback = self:safeCallback(_("Search"), function()
                     local value = dialog:getInputText()
                     UIManager:close(dialog)
-                    self.shelf_view_pages = { books = 1, public_account = 1 }
+                    self.shelf_view_pages = { books = 1, groups = 1, public_account = 1 }
                     options.prepared_shelf = nil
                     options.page = 1
                     self:showShelfView(

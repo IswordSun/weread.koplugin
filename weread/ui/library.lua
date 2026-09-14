@@ -404,7 +404,7 @@ function M:showShelfView(mode, keyword, old_view, options)
     local view
     view = LibraryView.show({
         mode = mode,
-        title = options.title or (group and group.label or nil),
+        title = options.title,
         wp_enable = options.wp_enable,
         books = books,
         accounts = accounts,

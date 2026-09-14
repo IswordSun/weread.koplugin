@@ -244,6 +244,8 @@ expect(selected_group_view.data.mode == "groups" and #selected_group_view.data.b
         and selected_group_view.data.books[1].bookId == "two"
         and selected_group_view.data.books[2].bookId == "one",
     "user-defined group did not open its tab in group order")
+expect(selected_group_view.data.title == nil,
+    "user-defined group replaced the bookshelf title")
 selected_group_view.callbacks.on_switch("public_account")
 local public_view = shown[#shown]
 public_view.callbacks.on_switch("books")

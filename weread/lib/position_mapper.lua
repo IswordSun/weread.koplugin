@@ -49,6 +49,27 @@ local function catalog(chapters)
     return result
 end
 
+local function chapter_at_offset(map, target)
+    local low, high = 1, #map.chapters
+    while low <= high do
+        local middle = math.floor((low + high) / 2)
+        local item = map.chapters[middle]
+        if target < item.after then
+            high = middle - 1
+        else
+            low = middle + 1
+        end
+    end
+    for index = low, #map.chapters do
+        local item = map.chapters[index]
+        if item.words > 0 then return item end
+    end
+    for index = #map.chapters, 1, -1 do
+        local item = map.chapters[index]
+        if item.words > 0 then return item end
+    end
+end
+
 local function find_progress_node(value, book_id, depth)
     if type(value) ~= "table" or (depth or 0) > 7 then
         return nil

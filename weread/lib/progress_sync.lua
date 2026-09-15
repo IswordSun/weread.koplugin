@@ -142,7 +142,7 @@ function ProgressSync:_local_fraction()
 end
 
 function ProgressSync:capture_local()
-    local book_id = self.detect_book()
+    local book_id = self.current_book_id or self.detect_book()
     if not book_id or is_mp_book(book_id) then
         return nil, "document_not_weread"
     end

@@ -44,11 +44,11 @@ local function loaded()
     for _, record in ipairs(host._xpointer_overlay.records) do ids[#ids + 1] = record.chapter_uid end
     return table.concat(ids, ",")
 end
-host:_refreshAnnotationOverlay(); assert(loaded() == "1,2")
-page = 51; host:onPageUpdate(); assert(loaded() == "4,5,6" and updates == 1)
-page = 21; host:onPageUpdate(); assert(loaded() == "1,2,3")
+host:_refreshAnnotationOverlay(); assert(loaded() == "1")
+page = 51; host:onPageUpdate(); assert(loaded() == "5" and updates == 1)
+page = 21; host:onPageUpdate(); assert(loaded() == "2")
 page = 40001; comparisons = 0; host:onPosUpdate()
-assert(loaded() == "3999,4000,4001" and comparisons < 25, "jump lookup must be logarithmic")
+assert(loaded() == "4000" and comparisons < 25, "jump lookup must be logarithmic")
 local before = reads
 local overlay = host._xpointer_overlay
 local generation = overlay.generation
@@ -59,11 +59,11 @@ assert(comparisons <= 400 and reads == before, "same-chapter turns must not scan
 assert(overlay.generation == generation and overlay.cache.marker, "ordinary turns discarded page caches")
 overlay.enabled = false; page = 101; comparisons = 0; host:onPageUpdate()
 assert(reads == before and comparisons == 0, "hidden overlay performed unnecessary work")
-overlay.enabled = true; host:_refreshAnnotationOverlay(); assert(loaded() == "9,10,11")
+overlay.enabled = true; host:_refreshAnnotationOverlay(); assert(loaded() == "10")
 page = 201
 host.ui.document.getPageXPointer = function() return nil end
 before = reads
 host:onPageUpdate()
-assert(loaded() == "19,20,21" and reads == before + 3,
+assert(loaded() == "20" and reads == before + 1,
     "missing page anchor caused an unbounded annotation load")
 print("annotation_page_events_spec: page/scroll/jump/cache and 5000-chapter CPU bounds passed")

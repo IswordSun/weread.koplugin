@@ -283,6 +283,10 @@ function WeRead.normalize_cover_url(url)
     if type(url) ~= "string" or url == "" then
         return url
     end
+    -- Public-account avatars are supplied by WeChat as HTTP qlogo URLs. The
+    -- bookshelf cover worker deliberately fetches HTTPS only, so upgrade this
+    -- known first-party host instead of allowing arbitrary HTTP downloads.
+    url = url:gsub("^http://wx%.qlogo%.cn/", "https://wx.qlogo.cn/")
     return url:gsub("/t%d+_", "/t9_")
 end
 

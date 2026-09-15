@@ -116,6 +116,7 @@ function M:applyShelfSnapshot(all_books, archives)
     self.shelf_regular = {}
     self.shelf_mp = {}
     for _i, book in ipairs(all_books or {}) do
+        book.cover = WeRead.normalize_cover_url(book.cover)
         if WeRead.is_mp_book(book.book_id or book.bookId) then
             table.insert(self.shelf_mp, book)
         else
@@ -368,7 +369,7 @@ function M:showShelfView(mode, keyword, old_view, options)
     local books = prepared and prepared.books or filtered(source_books, true)
     local accounts = prepared and prepared.accounts or filtered(self.shelf_mp, false)
     local shelf_settings = self.settings:get("shelf")
-    local cover_mode = mode ~= "public_account" and shelf_settings.view_mode == "cover"
+    local cover_mode = shelf_settings.view_mode == "cover"
     local paged = cover_mode or shelf_settings.paginated ~= false
     local page = paged and (options.page or self.shelf_view_pages[mode] or 1) or 1
     local cover_layout
@@ -390,7 +391,8 @@ function M:showShelfView(mode, keyword, old_view, options)
         cover_loading = {}
         local cache = self:getShelfCoverCache()
         local online = self:isNetworkOnline()
-        local visible, clamped_page = shelf_page_items(books, page, page_size)
+        local cover_items = mode == "public_account" and accounts or books
+        local visible, clamped_page = shelf_page_items(cover_items, page, page_size)
         page = clamped_page
         for _, book in ipairs(visible) do
             local path = cache:pathFor(book)
@@ -502,7 +504,7 @@ function M:showShelfView(mode, keyword, old_view, options)
         local fetch_options = {}
         for key, value in pairs(options) do fetch_options[key] = value end
         fetch_options.prepared_accounts = accounts
-        self:fetchVisibleShelfCovers(view, books, fetch_options)
+        self:fetchVisibleShelfCovers(view, mode == "public_account" and accounts or books, fetch_options)
     end
 end
 

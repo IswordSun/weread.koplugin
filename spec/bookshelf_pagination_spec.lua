@@ -67,7 +67,14 @@ package.preload["weread.lib.logger"] = function()
     return { info = function() end, warn = function() end, err = function() end }
 end
 package.preload["weread.lib.protocol"] = function()
-    return { is_mp_book = function() return false end }
+    return {
+        is_mp_book = function(book_id)
+            return tostring(book_id or ""):match("^MP_WXS_") ~= nil
+        end,
+        normalize_cover_url = function(url)
+            return tostring(url or ""):gsub("^http://wx%.qlogo%.cn/", "https://wx.qlogo.cn/")
+        end,
+    }
 end
 package.preload["weread.lib.plugin_util"] = function()
     return {
@@ -180,8 +187,9 @@ expect(shown[7].data.cover_mode == true and shown[7].data.paged == true,
 expect(shown[7].data.page_size == 6,
     "cover view did not limit the current page to six books")
 host:showShelfView("public_account", nil, shown[7], {})
-expect(shown[8].data.cover_mode == false and shown[8].data.paged == false,
-    "cover preference changed the public-account list")
+expect(shown[8].data.cover_mode == true and shown[8].data.paged == true
+        and shown[8].data.page_size == 6,
+    "cover preference did not apply to public accounts")
 
 local cover_requests = {}
 for index = 1, 8 do shelf[index].cover = "https://cdn.example/" .. tostring(index) end
@@ -209,6 +217,44 @@ expect(#shown == 10 and shown[10].data.cover_paths[shelf[1]] ~= nil,
     "cover batch did not refresh the page once with cached paths")
 expect(shown[10].data.cover_loading[shelf[1]] ~= true,
     "cached cover incorrectly remained in its loading state")
+
+local public_accounts = {}
+for index = 1, 7 do
+    public_accounts[index] = {
+        bookId = "MP_WXS_" .. tostring(index),
+        title = "Account " .. tostring(index),
+        cover = "https://cdn.example/account-" .. tostring(index),
+    }
+end
+host.shelf_mp = public_accounts
+local public_shown_before = #shown
+local public_requests_before = #cover_requests
+local public_subprocess_before = subprocess_runs
+local selected_account
+host.showMPAccount = function(_self, account) selected_account = account end
+host:showShelfView("public_account", nil, shown[#shown], {})
+local public_initial_view = shown[public_shown_before + 1]
+expect(public_initial_view.data.cover_mode == true
+        and public_initial_view.data.cover_loading[public_accounts[1]] == true,
+    "public-account cover grid did not expose the visible cover loading state")
+expect(#cover_requests == public_requests_before + 6
+        and subprocess_runs == public_subprocess_before + 6,
+    "public-account grid fetched covers outside the visible page")
+expect(shown[#shown].data.cover_paths[public_accounts[1]] ~= nil,
+    "public-account cover batch did not redraw with cached thumbnails")
+public_initial_view.callbacks.on_select(public_accounts[1], "public_account")
+expect(selected_account == public_accounts[1],
+    "public-account cover selection did not open the account article list")
+
+host:applyShelfSnapshot({{
+    bookId = "MP_WXS_avatar",
+    title = "Public account",
+    cover = "http://wx.qlogo.cn/mmopen/avatar",
+}}, {})
+expect(host.shelf_mp[1].cover == "https://wx.qlogo.cn/mmopen/avatar",
+    "public-account avatar was not upgraded to HTTPS for the cover worker")
+host.shelf_regular = shelf
+host.shelf_mp = {}
 
 local requests_before_unsafe_url = #cover_requests
 local unsafe_view = { page = 1 }

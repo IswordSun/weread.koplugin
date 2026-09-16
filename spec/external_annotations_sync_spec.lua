@@ -262,5 +262,59 @@ empty = true
 assert(finish(new("selected-refresh", { chapters[1] }, { clear_existing = true, refresh = true })))
 assert(store:get("book", "status", "selected-refresh:1").stats.total == 0,
     "successful zero-thought chapter must be recorded as retrieved")
+
+-- A large single gateway batch is normalized in bounded chunks. Interrupting
+-- after the first chunk leaves both the raw batch and its local checkpoint,
+-- then resuming finishes without repeating either network request.
+local bulk_calls = 0
+local bulk_client = {
+    get_chapter_underlines = function()
+        bulk_calls = bulk_calls + 1
+        local underlines = {}
+        for i = 1, 101 do
+            underlines[i] = { range = tostring(i) .. "-" .. tostring(i), markText = "bulk" }
+        end
+        return true, { underlines = underlines }
+    end,
+    build_chapter_review_batches = function(_self, ranges)
+        return { ranges }
+    end,
+    get_chapter_reviews_batch = function(_self, _book, _uid, batch)
+        bulk_calls = bulk_calls + 1
+        local reviews = {}
+        for _, range in ipairs(batch) do
+            local page_reviews = {}
+            for i = 1, 20 do
+                page_reviews[i] = { review = { content = "bulk thought", author = {} } }
+            end
+            reviews[#reviews + 1] = { range = range, pageReviews = page_reviews }
+        end
+        return true, { reviews = reviews }
+    end,
+}
+local bulk_store = helper.new()
+local function bulk_job()
+    return Sync:new({ store = bulk_store, client = bulk_client, book_id = "bulk",
+        chapters = { { chapterUid = "bulk" } } })
+end
+local bulk = bulk_job()
+for _ = 1, 20 do
+    assert(bulk:step() ~= nil)
+    local stage = bulk_store:get("bulk", "download", "bulk")
+    if stage and stage.next_persist_review == 101 then break end
+end
+local bulk_stage = bulk_store:get("bulk", "download", "bulk")
+assert(bulk_stage and bulk_stage.next_persist_batch == 1 and bulk_stage.next_persist_review == 101,
+    "large thought batch was not checkpointed after 100 ranges")
+assert(bulk_store:get("bulk", "batch", "bulk:1") and bulk_store:get("bulk", "thought", "bulk:100-100"),
+    "checkpoint lost staged reviews or normalized thoughts")
+bulk.cancelled = true
+assert(finish(bulk_job()) and bulk_calls == 2,
+    "resume repeated a saved large annotation batch")
+local bulk_source = bulk_store:get("bulk", "source", "bulk")
+assert(bulk_source and #(bulk_source.reviews or {}) == 0
+    and bulk_store:get("bulk", "thought", "bulk:101-101")
+    and not bulk_store:get("bulk", "batch", "bulk:1"),
+    "large annotation source retained raw reviews after persistence")
 helper.cleanup()
 print("external_annotations_sync_spec: resume, cross-file reuse, empty updates and offline prefetch passed")

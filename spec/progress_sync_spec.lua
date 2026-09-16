@@ -79,6 +79,7 @@ local function fixture(remote, options)
     local uploads = {}
     local jumps = {}
     local notifications = {}
+    local statuses = {}
     local client = {
         get_progress = function()
             return { book = remote }
@@ -120,6 +121,9 @@ local function fixture(remote, options)
         notify = function(code, data)
             notifications[#notifications + 1] = { code = code, data = data }
         end,
+        on_status = function(code, data)
+            statuses[#statuses + 1] = { code = code, data = data }
+        end,
         is_online = options.is_online,
         now = options.now,
     }
@@ -145,6 +149,7 @@ local function fixture(remote, options)
         uploads = uploads,
         jumps = jumps,
         notifications = notifications,
+        statuses = statuses,
         queue = queue,
         step = step,
         drain = drain,
@@ -217,6 +222,8 @@ test("matching open progress verifies the reporting gate", function()
     eq(reason, nil, "no gate reason")
     eq(position.chapter_uid, 22, "live chapter")
     eq(position.chapter_offset, 150, "live offset")
+    eq(#f.statuses, 1, "automatic open announces its real cloud check")
+    eq(f.statuses[1].code, "checking_progress", "open status describes the check")
 end)
 
 test("nearby progress within two percent is treated as aligned", function()
@@ -274,6 +281,9 @@ test("page change uploads once on close", function()
     eq(#f.uploads, 1, "close uploads once")
     eq(f.uploads[1].percent, 50, "close uploads current percent")
     eq(f.uploads[1].chapter_uid, 33, "close uploads current chapter")
+    eq(#f.statuses, 2, "open check and real close upload are both announced")
+    eq(f.statuses[2].code, "uploading_on_close",
+        "close status is shown only after upload starts")
     eq(f.values.books.book.pending_upload_position, nil,
         "successful upload clears pending snapshot")
 end)
@@ -499,6 +509,8 @@ test("offline automatic pull schedules a delayed retry", function()
     eq(#f.queue, 1, "offline automatic pull queues one retry")
     eq(f.queue[1].delay, PULL_RETRY_DELAY_SECONDS, "retry waits for the link")
     eq(#f.notifications, 0, "automatic retry stays silent")
+    eq(#f.statuses, 1, "automatic open announces its progress check before retrying")
+    eq(f.statuses[1].code, "checking_progress", "status names the attempted check")
 end)
 
 test("automatic pull retries stop at the attempt limit", function()

@@ -7,6 +7,7 @@ local Annotations = require("weread.lib.annotations")
 local Sync = {}
 Sync.__index = Sync
 Sync.NETWORK_REQUIRED = "annotation_network_required"
+Sync.PERSISTENCE_VERSION = 1
 
 -- Gateway batches normally contain 30 ranges. Keep the local write path
 -- bounded too, in case a future endpoint response is larger than expected.
@@ -120,6 +121,22 @@ function Sync:run()
         local range_key = Chapters.rangeKey(self.ranges and self.ranges[uid])
         local refreshing = store:get(book_id, "refresh", uid)
         local source_status = store:get(book_id, "source_status", uid)
+        if source_status and not refreshing
+            and source_status.persistence_version ~= Sync.PERSISTENCE_VERSION then
+            -- Do not decode a legacy chapter snapshot just to convert it: it
+            -- may contain the oversized review payload this format replaces.
+            -- Keep it available while offline, then atomically restart this
+            -- chapter from the small resumable representation once online.
+            self:requireNetwork()
+            store:write(book_id, {
+                { kind = "source", key = uid }, { kind = "source_status", key = uid },
+                { kind = "download", key = uid }, { kind = "batch", uid = uid },
+                { kind = "thought", uid = uid }, { kind = "refresh", key = uid },
+                { kind = "matching", uid = uid }, { kind = "projection", uid = uid },
+                { kind = "status", uid = uid },
+            })
+            source_status = nil
+        end
         if source_status and not refreshing then
             local status = self.document_key and store:get(book_id, "status",
                 store:projectionKey(self.document_key, uid))
@@ -339,7 +356,8 @@ function Sync:run()
             changes = {
                 { kind = "source", key = uid, uid = uid, value = source },
                 { kind = "source_status", key = uid, uid = uid,
-                    value = { revision = source.revision, total = #source.underlines } },
+                    value = { revision = source.revision, total = #source.underlines,
+                        persistence_version = Sync.PERSISTENCE_VERSION } },
                 { kind = "download", key = uid }, { kind = "batch", uid = uid },
                 { kind = "refresh", key = uid },
             }

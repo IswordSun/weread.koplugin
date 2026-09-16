@@ -157,6 +157,14 @@ host:setAnnotationPrefetchEnabled(false)
 host:prefetchChapterAnnotations({ book_id = "book" }, { chapterUid = "3" })
 drain()
 assert(calls == 2)
+-- A legacy completed source must not suppress the new-format prefetch.
+host:setAnnotationPrefetchEnabled(true)
+store:put("book", "source", "3", { chapter_uid = "3", underlines = {}, reviews = {} }, "3")
+store:put("book", "source_status", "3", { revision = "legacy", total = 0 }, "3")
+host:prefetchChapterAnnotations({ book_id = "book" }, { chapterUid = "3" })
+drain()
+assert(calls == 3 and store:get("book", "source_status", "3").persistence_version,
+    "prefetch skipped an old completed source")
 -- Multi-select keeps source catalog order, including noncontiguous choices.
 context.chapters = { { chapterUid = "1" }, { chapterUid = "2" }, { chapterUid = "3" } }
 local picker_options, chosen

@@ -316,5 +316,29 @@ assert(bulk_source and #(bulk_source.reviews or {}) == 0
     and bulk_store:get("bulk", "thought", "bulk:101-101")
     and not bulk_store:get("bulk", "batch", "bulk:1"),
     "large annotation source retained raw reviews after persistence")
+
+-- A completed cache from before per-range persistence must be re-downloaded
+-- without decoding its potentially oversized source payload. Offline attempts
+-- preserve that cache until a network-backed migration can begin.
+local legacy_store = helper.new()
+legacy_store:put("book", "source", "legacy", {
+    book_id = "book", chapter_uid = "legacy", underlines = { { range = "1-2" } },
+    reviews = { { range = "1-2", pageReviews = { { review = { content = "old" } } } } },
+}, "legacy")
+legacy_store:put("book", "source_status", "legacy", { revision = "old", total = 1 }, "legacy")
+local legacy_job = Sync:new({ store = legacy_store, client = client, book_id = "book",
+    chapters = { { chapterUid = "legacy" } }, offline = true })
+done, reason = finish(legacy_job)
+assert(done == nil and reason == Sync.NETWORK_REQUIRED
+    and legacy_store:get("book", "source", "legacy").reviews[1],
+    "offline migration erased the legacy source")
+count = #calls
+assert(finish(Sync:new({ store = legacy_store, client = client, book_id = "book",
+    chapters = { { chapterUid = "legacy" } } })))
+local migrated_status = legacy_store:get("book", "source_status", "legacy")
+assert(calls[count + 1] == "ulegacy" and migrated_status.persistence_version
+        == Sync.PERSISTENCE_VERSION
+    and #(legacy_store:get("book", "source", "legacy").reviews or {}) == 0,
+    "legacy source was not replaced by bounded persistence")
 helper.cleanup()
 print("external_annotations_sync_spec: resume, cross-file reuse, empty updates and offline prefetch passed")

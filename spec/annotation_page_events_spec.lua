@@ -36,7 +36,7 @@ local host = { _annotation_context = context, _xpointer_overlay = Overlay:new(),
             comparisons = comparisons + 1
             return a == b and 0 or a < b and 1 or -1
         end,
-    } },
+    }, view = { view_mode = "page" } },
 }
 for _, module in ipairs({ Controller, Lifecycle }) do for key, value in pairs(module) do host[key] = value end end
 local function loaded()
@@ -45,6 +45,9 @@ local function loaded()
     return table.concat(ids, ",")
 end
 host:_refreshAnnotationOverlay(); assert(loaded() == "1")
+comparisons = 0
+host:onPosUpdate()
+assert(comparisons == 0, "duplicate same-page event repeated chapter lookup")
 page = 51; host:onPageUpdate(); assert(loaded() == "5" and updates == 1)
 page = 21; host:onPageUpdate(); assert(loaded() == "2")
 page = 40001; comparisons = 0; host:onPosUpdate()

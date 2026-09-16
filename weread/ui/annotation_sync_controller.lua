@@ -223,7 +223,7 @@ function M:_currentAnnotationChapter(context)
         local index = ok and self:_annotationChapterIndex(context, point)
         if index and context.chapters[index] then return context.chapters[index] end
     end
-    return context.chapters[1]
+    if #context.chapters == 1 then return context.chapters[1] end
 end
 
 function M:_refreshAnnotationOverlay()
@@ -625,6 +625,9 @@ function M:startUnifiedAnnotationSync(options)
             return
         end
         local chapters = options.chapters
+        if options.all_chapters == true then
+            chapters = context.chapters
+        end
         if not chapters then
             local current = self:_currentAnnotationChapter(context)
             chapters = current and { current } or {}
@@ -698,31 +701,8 @@ function M:onUnifiedAnnotationsReady()
     started = perf("annotation_display_state", started)
     self:_refreshAnnotationOverlay()
     started = perf("saved_annotation_overlay", started)
-    if self:canPrefetchAnnotations()
-        and context.store:get(context.book_id, "meta", "enabled")
-        and not context.store:get(context.book_id, "manual_only", context.document_key) then
-        -- Resume downloads only with both prefetch switches enabled. Saved
-        -- source data never triggers automatic document-position matching.
-        local pending = {}
-        local partials = context.store:list(context.book_id, "download")
-        local refreshes = context.store:list(context.book_id, "refresh")
-        for _, chapter in ipairs(context.chapters) do
-            local uid = Chapters.uid(chapter)
-            if partials[uid] or refreshes[uid] then
-                pending[#pending + 1] = chapter
-            end
-        end
-        if #context.chapters == 1 and #pending == 0 and context.binding.automatic
-            and not context.store:get(context.book_id, "source_status", Chapters.uid(context.chapters[1])) then
-            pending = context.chapters
-        end
-        perf("annotation_prefetch_selection", started, "pending_chapters=", #pending,
-            "mapped_chapters=", #context.chapters)
-        if #pending > 0 then self:_runAnnotationJob(context, {
-            background = true, prefetch = true, chapters = pending }) end
-    else
-        perf("annotation_prefetch_disabled", started)
-    end
+    -- Opening a book only displays saved projections. Downloading or matching
+    -- is always initiated from an explicit menu action.
 end
 
 function M:prefetchChapterAnnotations(book, chapter)
@@ -888,6 +868,18 @@ function M:getUnifiedAnnotationMenuItems()
         { text = binding and T(_("Linked WeRead book: %1"), binding.title or binding.book_id)
                 or _("Match with WeRead book"),
             callback = function(menu) self:bindExternalAnnotationsBook(menu) end },
+        { text_func = function()
+                local context = self._annotation_context
+                if not context then return _("Continue matching") end
+                local summary = self:_annotationSummary(context)
+                return T(_("Continue matching · %1/%2 chapters, %3 underlines"),
+                    tostring(summary.chapters), tostring(#context.chapters), tostring(summary.located))
+            end, text = _("Continue matching"), callback = function()
+            self:startUnifiedAnnotationSync({
+                all_chapters = true,
+                offline = not self:isNetworkConnected(),
+            })
+        end },
         { text = _("Sync current chapter"), callback = function()
             self:startUnifiedAnnotationSync({ offline = not self:isNetworkConnected() }) end },
         { text = _("Choose chapters to match"), callback = function()

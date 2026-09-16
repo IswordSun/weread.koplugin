@@ -4,6 +4,7 @@
 
 package.path = "./?.lua;" .. package.path
 local ProgressSync = require("weread.lib.progress_sync")
+local PositionMapper = require("weread.lib.position_mapper")
 
 local failures, checks = 0, 0
 local current_test
@@ -354,6 +355,24 @@ test("suspend captures movement even without a page event", function()
     f.sync:on_suspend()
     eq(#f.uploads, 1, "suspend uploads captured movement")
     eq(f.uploads[1].percent, 40, "suspend uses current page")
+end)
+
+test("first capture reuses its newly built position catalog", function()
+    local f = fixture({
+        bookId = "book", progress = 25, chapterUid = 22,
+        chapterIdx = 2, chapterOffset = 150, updateTime = 10,
+    })
+    local original = PositionMapper.local_to_remote
+    local received_catalog
+    PositionMapper.local_to_remote = function(chapter_list, fraction, options)
+        received_catalog = options.catalog
+        return original(chapter_list, fraction, options)
+    end
+    local position = f.sync:capture_local()
+    PositionMapper.local_to_remote = original
+    eq(received_catalog == f.sync.document_context.position_catalog, true,
+        "first capture rebuilt instead of reusing its position catalog")
+    eq(position.chapter_uid, 22, "first capture position remains correct")
 end)
 
 test("single chapter cloud choice waits for target chapter then jumps", function()

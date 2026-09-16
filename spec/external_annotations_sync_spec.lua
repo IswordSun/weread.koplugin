@@ -192,14 +192,16 @@ assert(done == nil and reason == Sync.NETWORK_REQUIRED and offline.index == 2)
 assert(store:get("book", "projection", "offline-resume:3") and #calls == count)
 assert(not store:get("book", "source", "4"))
 
--- Disconnecting during the scheduled delay must not dispatch an HTTP request.
-local connected = true
-local interrupted = new("disconnect", { { chapterUid = "4" } }, { is_online = function() return connected end })
+-- A transient link-state false negative during the scheduled delay must not
+-- interrupt a request that can still reach the WeRead endpoint.
+local interrupted = new("disconnect", { { chapterUid = "7" } }, {
+    is_online = function() return false end,
+})
 local running, state = interrupted:step()
 assert(running == false and state.stage == "underlines")
-connected = false
 done, reason = finish(interrupted)
-assert(done == nil and reason == Sync.NETWORK_REQUIRED and #calls == count)
+assert(done and #calls > count,
+    "transient link state interrupted a successful annotation request")
 
 -- A saved partial thoughts batch still needs the network; its checkpoint stays.
 local partial = new("partial-offline", { { chapterUid = "4" } })

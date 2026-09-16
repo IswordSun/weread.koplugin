@@ -70,7 +70,11 @@ function Sync:yield(stage, delay, detail)
 end
 
 function Sync:requireNetwork()
-    if self.offline or (self.is_online and not self.is_online()) then
+    -- `offline` is captured before the job starts. Do not poll KOReader's
+    -- link-state API while a request is running: it can momentarily report
+    -- disconnected although the HTTP route remains usable. Actual request
+    -- results and retries are the authoritative signal after startup.
+    if self.offline then
         error(Sync.NETWORK_REQUIRED, 0)
     end
 end

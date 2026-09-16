@@ -568,7 +568,9 @@ function M:onUnifiedAnnotationsReady()
             local key = context.store:projectionKey(context.document_key, uid)
             local status = context.statuses[key]
             local partial = partials[uid]
-            if (source and (not status or status.revision ~= source.revision))
+            if (source and (source.persistence_version
+                    ~= require("weread.lib.annotation_sync").PERSISTENCE_VERSION
+                or not status or status.revision ~= source.revision))
                 or (partial and self:isNetworkConnected()) then
                 cached[#cached + 1] = chapter
             end
@@ -588,7 +590,9 @@ function M:prefetchChapterAnnotations(book, chapter)
     local store = self:_annotationStore()
     if not self:isAnnotationPrefetchEnabled()
         or not store:get(book_id, "meta", "enabled") then return end
-    if store:get(book_id, "source_status", Chapters.uid(chapter)) then return end
+    local source = store:get(book_id, "source_status", Chapters.uid(chapter))
+    if source and source.persistence_version
+        == require("weread.lib.annotation_sync").PERSISTENCE_VERSION then return end
     self:_runAnnotationJob({ book_id = book_id, book = book, binding = book,
         store = store, chapters = { chapter } }, { background = true, prefetch = true })
 end

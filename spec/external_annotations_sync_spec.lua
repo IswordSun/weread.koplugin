@@ -199,7 +199,7 @@ local interrupted = new("disconnect", { { chapterUid = "7" } }, {
 })
 local running, state = interrupted:step()
 assert(running == false and state.stage == "underlines")
-done, reason = finish(interrupted)
+done = finish(interrupted)
 assert(done and #calls > count,
     "transient link state interrupted a successful annotation request")
 

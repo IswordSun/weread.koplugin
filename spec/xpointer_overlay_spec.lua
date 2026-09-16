@@ -55,6 +55,9 @@ expect(draw_calls == 12, "visible underline was not drawn as short dashes")
 expect(overlay.last_metrics.candidates == 1 and overlay.last_metrics.boxes == 1,
     "paint metrics do not describe the visible page")
 expect(overlay.last_metrics.cache_hit == false, "first paint unexpectedly hit cache")
+local cached_page = overlay.cache["1:4"]
+expect(cached_page and cached_page.lines and #cached_page.lines == 1,
+    "page cache did not retain merged drawing spans")
 
 local hit = overlay:hitTest({ x = 20, y = 25 })
 expect(hit and hit.id == "visible", "tap did not resolve the visible overlay record")
@@ -67,6 +70,8 @@ expect(overlay.last_metrics.cache_hit == true, "second paint did not report cach
 expect(sort_calls == 1, "page repaint repeated underline sorting")
 expect(draw_calls == 24 and overlay:hitTest({ x = 20, y = 25 }).id == "visible",
     "cached lines changed drawing or thought hit targets")
+expect(overlay.cache["1:4"].lines == cached_page.lines,
+    "cached page rebuilt its drawing spans during repaint")
 
 -- Unified projections are ordered by their start XPointer. Build the interval
 -- prefix once, then page turns should skip records before/after the page while

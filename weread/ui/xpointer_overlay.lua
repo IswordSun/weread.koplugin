@@ -105,7 +105,8 @@ end
 
 local function merge_lines(boxes)
     -- Merge overlapping line spans before painting, so intersections never
-    -- darken. Reuse these spans with the page's cached screen rectangles.
+    -- darken. This depends only on the cached page rectangles, so it can be
+    -- reused for repeated repaints of the same page.
     local lines = {}
     for _, entry in ipairs(boxes) do
         local rect = entry.rect

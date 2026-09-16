@@ -283,11 +283,12 @@ expect(sync_calls == 1,
 local Unified = require("weread.ui.annotation_sync_controller")
 for name, method in pairs(Unified) do bind_host[name] = method end
 local local_book_items = bind_host:getXPointerOverlayPrototypeMenuItems()
-expect(#local_book_items == 4, "unified annotation management is not concise")
+expect(#local_book_items == 5, "unified annotation management is missing an action")
 expect(local_book_items[1].text == "Linked WeRead book: 测试书"
-    and local_book_items[2].text == "Sync current chapter"
-    and local_book_items[3].text == "Choose chapters to match"
-    and local_book_items[4].text == "Clear underlines and thoughts",
-    "management did not distinguish resume from clearing file coordinates")
+    and local_book_items[2].text == "Continue matching"
+    and local_book_items[3].text == "Sync current chapter"
+    and local_book_items[4].text == "Choose chapters to match"
+    and local_book_items[5].text == "Clear underlines and thoughts",
+    "management did not distinguish whole-book, chapter, and clearing actions")
 
 print(("xpointer_overlay_spec: %d checks"):format(checks))

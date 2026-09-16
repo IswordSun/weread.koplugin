@@ -245,6 +245,22 @@ function M:_refreshAnnotationOverlay()
         end
     end
     local document = self.ui.document
+    -- A page turn normally emits both PageUpdate and PosUpdate. In paged mode
+    -- both callbacks see the same stable page, so the latter must not repeat
+    -- chapter boundary comparisons before the overlay paint cache can be used.
+    local view = overlay.view or self.ui.view
+    local page = document.getCurrentPage and document:getCurrentPage()
+    local generation = context.generation or 0
+    if view and view.view_mode == "page" and page ~= nil then
+        if overlay._annotation_refresh_context == context
+            and overlay._annotation_refresh_generation == generation
+            and overlay._annotation_refresh_page == page then
+            return
+        end
+        overlay._annotation_refresh_context = context
+        overlay._annotation_refresh_generation = generation
+        overlay._annotation_refresh_page = page
+    end
     local current = document:getXPointer()
     local function chapter_at(point)
         return self:_annotationChapterIndex(context, point) or 1
@@ -262,7 +278,7 @@ function M:_refreshAnnotationOverlay()
         -- A missing page anchor must not load the rest of a large book.
         last = stop and chapter_at(stop) or (at_end and #context.chapters or active)
     end
-    local window = tostring(active) .. ":" .. tostring(last) .. ":" .. tostring(context.generation or 0)
+    local window = tostring(active) .. ":" .. tostring(last) .. ":" .. tostring(generation)
     if overlay._annotation_window == window then return end
     local records = {}
     for index = math.max(1, active - 1), math.min(#context.chapters, last + 1) do

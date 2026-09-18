@@ -9,7 +9,7 @@ local logger = require("weread.lib.logger")
 local Updater = {}
 Updater.__index = Updater
 
-Updater.AUTO_CHECK_INTERVAL = 24 * 60 * 60
+Updater.AUTO_CHECK_INTERVAL = 60 * 60
 Updater.MAX_PACKAGE_BYTES = 10 * 1024 * 1024
 Updater.API_URL = "https://api.github.com/repos/finlater/weread.koplugin/releases/latest"
 Updater.RELEASE_PREFIX = "https://github.com/finlater/weread.koplugin/releases/download/"

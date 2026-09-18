@@ -777,13 +777,13 @@ function M:getUpdateMenuItems()
         })
     end
     table.insert(items, {
-        text = _("Automatically check once a day"),
+        text = _("Automatically check once an hour"),
         keep_menu_open = true,
         check_callback_updates_menu = true,
         checked_func = function()
             return self.settings:get("update").auto_check == true
         end,
-        callback = self:safeCallback(_("Automatically check once a day"),
+        callback = self:safeCallback(_("Automatically check once an hour"),
             function(touchmenu_instance)
                 local update = self.settings:get("update")
                 update.auto_check = not (update.auto_check == true)

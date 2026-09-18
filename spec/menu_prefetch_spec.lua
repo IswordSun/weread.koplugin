@@ -223,7 +223,7 @@ expect(about_items[1] and about_items[1].text == "Version %1",
 expect(about_items[2] and about_items[2].text == "Author: %1",
     "author is the second about item")
 expect(about_items[3] and about_items[3].text == "Check for updates"
-        and about_items[4].text == "Automatically check once a day"
+        and about_items[4].text == "Automatically check once an hour"
         and about_items[5].text == "Prefer proxy for updates",
     "update settings follow version and author at the same level")
 available_version = "0.7.0"

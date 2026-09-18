@@ -9,6 +9,7 @@ local InputContainer = require("ui/widget/container/inputcontainer")
 local ProgressWidget = require("ui/widget/progresswidget")
 local Size = require("ui/size")
 local TextWidget = require("ui/widget/textwidget")
+local TextBoxWidget = require("ui/widget/textboxwidget")
 local UIManager = require("ui/uimanager")
 local VerticalGroup = require("ui/widget/verticalgroup")
 local VerticalSpan = require("ui/widget/verticalspan")
@@ -47,10 +48,11 @@ function DownloadDialog:init()
     table.insert(vertical_group, self.title_container)
 
     if self.description and self.description ~= "" then
-        self.description_widget = TextWidget:new{
+        self.description_widget = TextBoxWidget:new{
             text = self.description,
             face = Font:getFace("xx_smallinfofont"),
-            max_width = width,
+            width = width,
+            alignment = "center",
         }
         self.description_container = CenterContainer:new{
             dimen = Geom:new{

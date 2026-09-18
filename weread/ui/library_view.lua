@@ -1,4 +1,4 @@
--- Full-screen, e-ink-friendly bookshelf with direct Books/Public Accounts tabs.
+-- Compact, e-ink-friendly bookshelf. Navigation and actions share one row.
 
 local Blitbuffer = require("ffi/blitbuffer")
 local Button = require("ui/widget/button")
@@ -12,13 +12,13 @@ local GestureRange = require("ui/gesturerange")
 local HorizontalGroup = require("ui/widget/horizontalgroup")
 local HorizontalSpan = require("ui/widget/horizontalspan")
 local ImageWidget = require("ui/widget/imagewidget")
+local IconWidget = require("ui/widget/iconwidget")
 local InputContainer = require("ui/widget/container/inputcontainer")
 local LineWidget = require("ui/widget/linewidget")
 local OverlapGroup = require("ui/widget/overlapgroup")
 local ScrollableContainer = require("ui/widget/container/scrollablecontainer")
 local Size = require("ui/size")
 local TextWidget = require("ui/widget/textwidget")
-local TitleBar = require("ui/widget/titlebar")
 local UIManager = require("ui/uimanager")
 local VerticalGroup = require("ui/widget/verticalgroup")
 local VerticalSpan = require("ui/widget/verticalspan")
@@ -26,7 +26,10 @@ local Widget = require("ui/widget/widget")
 local Screen = Device.screen
 local FocusNav = require("weread.ui.focus_nav")
 local I18n = require("weread.lib.i18n")
+local CoverLayout = require("weread.lib.cover_layout")
 local T = require("ffi/util").template
+local HEADER_SIZE = 72
+local icons_dir = debug.getinfo(1, "S").source:match("^@(.*/)") .. "../../icons/"
 
 local function _(text) return I18n.tr(text) end
 
@@ -258,6 +261,12 @@ local LibraryView = FocusManager:extend{
     keyword = nil,
     sort_label = nil,
     filter_label = nil,
+    groups = nil,
+    group_key = nil,
+    group_label = nil,
+    on_select_group = nil,
+    on_display_change = nil,
+    scroll_offset = nil,
     on_switch = nil,
     on_search = nil,
     on_refresh = nil,
@@ -276,101 +285,191 @@ local LibraryView = FocusManager:extend{
     on_page_changed = nil,
 }
 
-function LibraryView:tabBar()
-    local tabs = {
-        { mode = "books", text = T(_("Books (%1)"), #(self.books or {})) },
-        { mode = "public_account", text = T(_("Public Accounts (%1)"), #(self.accounts or {})) },
-    }
-    local cell_w = math.floor(self.screen_w / #tabs)
-    local row = HorizontalGroup:new{}
-    self._tab_buttons = {}
-    for index, tab in ipairs(tabs) do
-        local active = tab.mode == self.mode
-        local enabled = tab.mode ~= "public_account" or self.wp_enable
-        local width = index == #tabs and self.screen_w - cell_w or cell_w
-        local button = Button:new{
-            text = tab.text,
-            width = width,
-            radius = 0,
-            margin = 0,
-            bordersize = 0,
-            background = Blitbuffer.COLOR_WHITE,
-            text_font_size = 24,
-            text_font_bold = true,
-            enabled = enabled,
-            show_parent = self,
-            callback = function()
-                if enabled and not active and self.on_switch then
-                    self.on_switch(tab.mode)
-                end
-            end,
-        }
-        if enabled then self._tab_buttons[#self._tab_buttons + 1] = button end
-        table.insert(row, VerticalGroup:new{
-            align = "left",
-            button,
-            LineWidget:new{
-                dimen = Geom:new{ w = width, h = active and Screen:scaleBySize(3) or 1 },
-                background = active and Blitbuffer.COLOR_BLACK or Blitbuffer.COLOR_GRAY,
-            },
-        })
-    end
-    return FrameContainer:new{ bordersize = 0, padding = 0, margin = 0, row }
+-- Defer destructive callbacks until Button has finished repainting its feedback.
+local function after_tap(callback)
+    return function() UIManager:nextTick(callback) end
 end
 
-function LibraryView:actionBar()
-    local cell_w = math.floor(self.screen_w / 2)
-    local search_label = self.keyword and self.keyword ~= ""
-        and T(_("⌕ Search: %1"), self.keyword) or _("⌕ Search shelf")
-    local filter_label = self.filter_label and self.filter_label ~= _("All")
-        and T(_("▾ Filter: %1"), self.filter_label) or _("▾ Filter")
-    local sort_label = self.sort_label and self.sort_label ~= ""
-        and T(_("⇅ Sort: %1"), self.sort_label) or _("⇅ Sort")
-    local search_button = Button:new{
-        text = search_label,
-        width = cell_w,
-        radius = 0, margin = 0, bordersize = 0,
-        text_font_bold = false,
-        show_parent = self,
-        callback = function() if self.on_search then self.on_search() end end,
-    }
-    local refresh_button = Button:new{
-        text = _("↻ Get latest"),
-        width = self.screen_w - cell_w,
-        radius = 0, margin = 0, bordersize = 0,
-        text_font_bold = false,
-        show_parent = self,
-        callback = function() if self.on_refresh then self.on_refresh() end end,
-    }
-    local primary = HorizontalGroup:new{ search_button, refresh_button }
-    local sort_button = Button:new{
-            text = sort_label,
-            width = self.mode == "books" and cell_w or self.screen_w,
-            radius = 0, margin = 0, bordersize = 0,
-            text_font_bold = false,
-            show_parent = self,
-            callback = function() if self.on_sort then self.on_sort() end end,
+function LibraryView:headerBar()
+    local size = Screen:scaleBySize(HEADER_SIZE)
+    local title = self.mode == "public_account" and _("Public Accounts")
+        or T(_("Books · %1"), self.group_label or _("All"))
+    local function button(text, icon, width, callback, align, icon_file)
+        local widget = Button:new{
+            text = text, icon = icon, width = width, height = size,
+            icon_width = Screen:scaleBySize(36), icon_height = Screen:scaleBySize(36),
+            padding = 0, radius = 0, margin = 0, bordersize = 0,
+            text_font_size = 24, align = align or "center",
+            avoid_text_truncation = false, show_parent = self,
+            callback = after_tap(callback),
         }
-    local secondary = HorizontalGroup:new{ sort_button }
-    local filter_button
-    if self.mode == "books" then
-        filter_button = Button:new{
-            text = filter_label,
-            width = self.screen_w - cell_w,
-            radius = 0, margin = 0, bordersize = 0,
-            text_font_bold = false,
-            show_parent = self,
-            callback = function() if self.on_filter then self.on_filter() end end,
-        }
-        table.insert(secondary, filter_button)
+        if icon_file then
+            widget.label_widget:free()
+            widget.label_widget = IconWidget:new{
+                file = icons_dir .. icon_file, width = Screen:scaleBySize(36), height = Screen:scaleBySize(36),
+            }
+            widget.label_container[1] = widget.label_widget
+        end
+        return widget
     end
-    self._action_secondary = { sort_button }
-    if filter_button then self._action_secondary[#self._action_secondary + 1] = filter_button end
-    self._action_primary = { search_button, refresh_button }
-    return FrameContainer:new{
-        bordersize = 0, padding = 0, margin = 0,
-        VerticalGroup:new{ align = "left", secondary, primary },
+    local back = button(nil, "chevron.left", size, function() self:onClose() end)
+    local location = button(title .. " ▾", nil, self.screen_w - 4 * size,
+        function() self:showSourceMenu() end, "left")
+    local search = button(nil, "appbar.search", size,
+        function() if self.on_search then self.on_search() end end, nil, "shelf-search.svg")
+    self.refresh_button = button(nil, "appbar.search", size,
+        function() if self.on_refresh then self.on_refresh() end end, nil, "shelf-refresh.svg")
+    local menu = button(nil, "appbar.menu", size, function() self:showOptions() end, nil, "shelf-menu.svg")
+    self._header_buttons = { back, location, search, self.refresh_button, menu }
+    return VerticalGroup:new{
+        align = "left",
+        HorizontalGroup:new{ back, location, search, self.refresh_button, menu },
+        LineWidget:new{ dimen = Geom:new{ w = self.screen_w, h = Size.border.thin } },
     }
+end
+
+function LibraryView:setRefreshing(refreshing)
+    self.refresh_button:enableDisable(not refreshing)
+    UIManager:setDirty(self, "ui", self.refresh_button.dimen)
+end
+
+function LibraryView:getScrollOffset()
+    return self.scroll and self.scroll:getScrolledOffset()
+end
+
+function LibraryView:showSourceMenu(menu_mode)
+    local Menu = require("ui/widget/menu")
+    menu_mode = menu_mode or self.mode
+    local width = math.floor(self.screen_w * 0.9)
+    local dialog
+    local function select(callback)
+        return after_tap(function()
+            UIManager:close(dialog)
+            callback()
+        end)
+    end
+    local tab_width = math.floor((width - 2 * Size.border.window) / 2)
+    local tabs = {}
+    for _, tab in ipairs({
+        { mode = "books", text = _("Books") },
+        { mode = "public_account", text = _("Public Accounts") },
+    }) do
+        tabs[#tabs + 1] = Button:new{
+            text = tab.text, width = tab_width, height = Screen:scaleBySize(HEADER_SIZE),
+            text_font_size = 24,
+            padding = 0, radius = 0, margin = 0, bordersize = 0,
+            checked_func = function() return menu_mode == tab.mode end,
+            enabled = tab.mode == "books" or self.wp_enable,
+            callback = select(function()
+                if tab.mode == "books" then
+                    self:showSourceMenu("books")
+                elseif self.on_switch then
+                    self.on_switch(tab.mode)
+                end
+            end),
+        }
+    end
+    -- Menu owns pagination, truncation, dismiss gestures and keyboard focus.
+    local header = HorizontalGroup:new{ tabs[1], tabs[2] }
+    header.getHeight = function(widget) return widget:getSize().h end
+    header.generateVerticalLayout = function() return { { tabs[1] }, { tabs[2] } } end
+    local items = {}
+    local function add_group(key, label, count)
+        items[#items + 1] = {
+            text = label,
+            mandatory = (self.mode == "books" and self.group_key == key and "✓  " or "")
+                .. tostring(count),
+            callback = select(function()
+                if self.on_select_group then self.on_select_group(key) end
+            end),
+        }
+    end
+    if menu_mode == "books" then
+        add_group(nil, _("All books"), self.total_books or #(self.books or {}))
+        for _, group in ipairs(self.groups or {}) do
+            add_group(group.key, group.label, #group.books)
+        end
+    else
+        items[1] = {
+            text = _("Public Accounts"), mandatory = tostring(#(self.accounts or {})),
+            callback = select(function() if self.on_switch then self.on_switch("public_account") end end),
+        }
+    end
+    local header_height = header:getSize().h
+    local row_height = Screen:scaleBySize(54)
+    local available_height = self.screen_h - header_height - 2 * Size.border.window
+    local paged = #items * row_height > available_height
+    local per_page = paged and math.max(1, math.floor((available_height - Screen:scaleBySize(HEADER_SIZE)) / row_height))
+        or #items
+    dialog = Menu:new{
+        title = _("Select content"), custom_title_bar = header,
+        width = width,
+        height = header_height + per_page * row_height + 2 * Size.border.window
+            + (paged and Screen:scaleBySize(HEADER_SIZE) or 0),
+        item_table = items, items_per_page = per_page, items_font_size = 22,
+        _recalculateDimen = function(menu, ...)
+            Menu._recalculateDimen(menu, ...)
+            if not paged then
+                -- Native Menu reserves a footer even for one page.
+                menu.available_height = menu.inner_dimen.h - header_height
+                menu.item_dimen.h = math.floor(menu.available_height / per_page)
+            end
+        end,
+        -- Unlike the standard title bar, these buttons have no Sym/Menu key
+        -- shortcuts. Keep them reachable with the five-way controller, too.
+        mergeTitleBarIntoLayout = function(menu)
+            table.insert(menu.layout, 1, { tabs[2] })
+            table.insert(menu.layout, 1, { tabs[1] })
+            menu.selected.y = menu.selected.y + 2
+        end,
+    }
+    if not paged then
+        -- Keep ownership for cleanup, but no invisible controls over the last row.
+        dialog.page_info.paintTo = function() end
+        dialog.page_info.handleEvent = function() return false end
+    end
+    -- Keep popout dismissal, but use square corners like the bookshelf.
+    dialog[1].radius = 0
+    UIManager:show(dialog)
+end
+
+function LibraryView:showOptions()
+    local ButtonDialog = require("ui/widget/buttondialog")
+    local dialog
+    local function action(callback)
+        return after_tap(function() UIManager:close(dialog) callback() end)
+    end
+    local buttons = {{ {
+        text = T(_("Sort: %1"), self.sort_label or ""),
+        callback = action(function() if self.on_sort then self.on_sort() end end),
+    } }}
+    if self.mode == "books" then
+        buttons[#buttons + 1] = {{
+            text = T(_("Filter: %1"), self.filter_label or _("All")),
+            callback = action(function() if self.on_filter then self.on_filter() end end),
+        }}
+        local row = {}
+        for _, option in ipairs({ { "list", _("List view") }, { "cover", _("Cover view") } }) do
+            row[#row + 1] = {
+                text = option[2], checked_func = function() return self.cover_mode == (option[1] == "cover") end,
+                callback = action(function() self.on_display_change("view_mode", option[1]) end),
+            }
+        end
+        buttons[#buttons + 1] = row
+    end
+    if not self.cover_mode then
+        local row = {}
+        for _, option in ipairs({ { true, _("Page mode") }, { false, _("Continuous scrolling") } }) do
+            row[#row + 1] = {
+                text = option[2], checked_func = function() return self.paged == option[1] end,
+                callback = action(function() self.on_display_change("paginated", option[1]) end),
+            }
+        end
+        buttons[#buttons + 1] = row
+    end
+    dialog = ButtonDialog:new{ title = _("Bookshelf"), buttons = buttons }
+    dialog.movable[1].radius = 0
+    UIManager:show(dialog)
 end
 
 function LibraryView:itemStatus(book)
@@ -503,36 +602,37 @@ function LibraryView:pageBar()
     local button_height = Screen:scaleBySize(54)
     local previous = Button:new{
         text = _("Previous"), width = cell_w, height = button_height,
-        text_font_size = 22, text_font_bold = true, radius = 0, margin = 0,
+        text_font_size = 22, text_font_bold = true, radius = 0, margin = 0, padding = 0,
         bordersize = 0, enabled = self.page > 1, show_parent = self,
-        callback = function()
+        callback = after_tap(function()
             if self.page > 1 and self.on_page_changed then
                 self.on_page_changed(self.page - 1)
             end
-        end,
+        end),
     }
     local page_text = Button:new{
         text = T(_("%1/%2 pages"), tostring(self.page), tostring(self.page_count)),
         width = cell_w, height = button_height, text_font_size = 18,
-        radius = 0, margin = 0, bordersize = 0,
+        radius = 0, margin = 0, bordersize = 0, padding = 0,
         enabled = false, show_parent = self,
     }
     local next_page = Button:new{
         text = _("Next"), width = self.screen_w - 2 * cell_w,
         height = button_height, text_font_size = 22, text_font_bold = true,
-        radius = 0, margin = 0, bordersize = 0,
+        radius = 0, margin = 0, bordersize = 0, padding = 0,
         enabled = self.page < self.page_count, show_parent = self,
-        callback = function()
+        callback = after_tap(function()
             if self.page < self.page_count and self.on_page_changed then
                 self.on_page_changed(self.page + 1)
             end
-        end,
+        end),
     }
     self._page_buttons = { previous, page_text, next_page }
     return HorizontalGroup:new{ previous, page_text, next_page }
 end
 
 function LibraryView:init()
+    self.ges_events = {}
     self.screen_w = Screen:getWidth()
     self.screen_h = Screen:getHeight()
     self.dimen = Geom:new{ x = 0, y = 0, w = self.screen_w, h = self.screen_h }
@@ -542,22 +642,10 @@ function LibraryView:init()
     self.list_width = self.screen_w - 3 * Screen:scaleBySize(6)
     if Device:hasKeys() then self.key_events.Close = { { Device.input.group.Back } } end
 
-    self.title_bar = TitleBar:new{
-        width = self.screen_w,
-        title = self.title or _("WeRead Bookshelf"),
-        title_face = Font:getFace("tfont", 28),
-        align = "center",
-        with_bottom_line = true,
-        right_icon_size_ratio = 0.75,
-        close_callback = function() self:onClose() end,
-        show_parent = self,
-    }
-    local tabs = self:tabBar()
-    local actions = self:actionBar()
+    local header = self:headerBar()
     self:preparePagination()
     local page_bar = self:pageBar()
-    local scroll_h = math.max(1, self.screen_h - self.title_bar:getHeight()
-        - tabs:getSize().h - actions:getSize().h
+    local scroll_h = math.max(1, self.screen_h - header:getSize().h
         - (page_bar and page_bar:getSize().h or 0))
     if self.cover_mode and self.mode == "books" then
         local rows = math.max(1, math.floor(tonumber(self.cover_rows) or 2))
@@ -570,34 +658,36 @@ function LibraryView:init()
         show_parent = self,
         VerticalGroup:new{ align = "left", content },
     }
-    local rows = {
-        self._tab_buttons,
-        self._action_secondary,
-        self._action_primary,
-    }
+    self.scroll = scroll
+    if self.scroll_offset and not self.paged then scroll:setScrolledOffset(self.scroll_offset) end
+    local rows = { self._header_buttons }
     for _i, item_row in ipairs(self._focus_item_rows) do
         rows[#rows + 1] = item_row
     end
     local outside_scroll = {}
-    for _i, button in ipairs(self._tab_buttons) do outside_scroll[button] = true end
-    for _i, button in ipairs(self._action_secondary) do outside_scroll[button] = true end
-    for _i, button in ipairs(self._action_primary) do outside_scroll[button] = true end
+    for _i, button in ipairs(self._header_buttons) do outside_scroll[button] = true end
     if self._page_buttons then
         rows[#rows + 1] = self._page_buttons
         for _i, button in ipairs(self._page_buttons) do outside_scroll[button] = true end
     end
     FocusNav.apply(self, rows, { scroll = scroll, outside_scroll = outside_scroll })
-    -- Items follow the three fixed rows (tabs, secondary, primary actions).
-    FocusNav.initialFocus(self, 1, #rows > 3 and 4 or 1)
+    FocusNav.initialFocus(self, 1, #self._focus_item_rows > 0 and 2 or 1)
     self[1] = FrameContainer:new{
         background = Blitbuffer.COLOR_WHITE,
         bordersize = 0, padding = 0, margin = 0,
         dimen = self.dimen:copy(),
         VerticalGroup:new{
-            align = "left", self.title_bar, tabs, actions, scroll,
+            align = "left", header, scroll,
             page_bar or VerticalSpan:new{ width = 0 },
         },
     }
+    if self.paged then
+        -- Let horizontal swipes reach the shelf pager, not the inner scroller.
+        scroll.onScrollableSwipe = function() return false end
+        self.ges_events.ShelfSwipe = {
+            GestureRange:new{ ges = "swipe", range = scroll.dimen },
+        }
+    end
     if self.paged and Device:hasKeys() then
         self.onNextPage = function(view)
             if view.page < view.page_count and view.on_page_changed then
@@ -612,6 +702,15 @@ function LibraryView:init()
             return true
         end
     end
+end
+
+function LibraryView:onShelfSwipe(_, ges)
+    if not self.paged then return false end
+    local delta = ges.direction == "west" and 1 or ges.direction == "east" and -1
+    if not delta then return false end
+    local page = self.page + delta
+    if page >= 1 and page <= self.page_count and self.on_page_changed then self.on_page_changed(page) end
+    return true
 end
 
 function LibraryView:onShow()
@@ -629,6 +728,30 @@ function LibraryView:onClose()
 end
 
 local M = {}
+
+-- Measure before fetching covers, so the worker and the visible grid agree.
+function M.getLayout(cover_mode, count, mode)
+    local width, height = Screen:getWidth(), Screen:getHeight()
+    local header_height = Screen:scaleBySize(HEADER_SIZE) + Size.border.thin
+    local page_bar_height = Screen:scaleBySize(54)
+    local function layout(reserved)
+        if cover_mode then
+            return CoverLayout.calculate{
+                width = width, height = height,
+                size_scale = Screen:scaleBySize(1000) / 1000,
+                reserved_height = reserved,
+            }
+        end
+        local row = ShelfRow:new{ width = width, text = "", font_size = mode == "public_account" and 22 or 20 }
+        local row_height = row:getSize().h + 1
+        if row.free then row:free() end
+        return { page_size = math.max(1, math.floor((height - reserved) / row_height)) }
+    end
+    local result = layout(header_height)
+    if count > result.page_size then result = layout(header_height + page_bar_height) end
+    return result
+end
+
 function M.show(data, callbacks)
     callbacks = callbacks or {}
     local view = LibraryView:new{
@@ -636,6 +759,11 @@ function M.show(data, callbacks)
         title = data.title,
         wp_enable = data.wp_enable ~= false,
         books = data.books,
+        groups = data.groups,
+        group_key = data.group_key,
+        group_label = data.group_label,
+        total_books = data.total_books,
+        scroll_offset = data.scroll_offset,
         accounts = data.accounts,
         keyword = data.keyword,
         sort_label = data.sort_label,
@@ -650,6 +778,8 @@ function M.show(data, callbacks)
         cover_paths = data.cover_paths,
         cover_loading = data.cover_loading,
         on_switch = callbacks.on_switch,
+        on_select_group = callbacks.on_select_group,
+        on_display_change = callbacks.on_display_change,
         on_search = callbacks.on_search,
         on_refresh = callbacks.on_refresh,
         on_sort = callbacks.on_sort,

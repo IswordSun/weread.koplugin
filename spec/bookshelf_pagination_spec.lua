@@ -6,9 +6,12 @@ local function expect(condition, message)
     if not condition then error(message or ("check " .. checks .. " failed")) end
 end
 
+local dialogs = {}
 package.preload["ui/uimanager"] = function()
     return {
+        show = function(_self, dialog) dialogs[#dialogs + 1] = dialog end,
         close = function() end,
+        nextTick = function(_self, callback) callback() end,
         scheduleIn = function(_self, _delay, callback) callback() end,
     }
 end
@@ -41,6 +44,12 @@ for _, name in ipairs({
 }) do
     package.preload[name] = function() return {} end
 end
+package.preload["ui/widget/confirmbox"] = function()
+    return { new = function(_self, data)
+        data.movable = { {} }
+        return data
+    end }
+end
 package.preload["weread.lib.book_reviews"] = function() return {} end
 package.preload["weread.ui.book_reviews_view"] = function() return {} end
 package.preload["weread.lib.content"] = function() return {} end
@@ -56,6 +65,7 @@ local fake_cover_cache = {
         return cached_covers[book]
     end,
     prune = function() return 0 end,
+    sourcePathFor = function() return nil end,
 }
 package.preload["weread.lib.cover_cache"] = function()
     return {
@@ -66,7 +76,7 @@ package.preload["weread.lib.logger"] = function()
     return { info = function() end, warn = function() end, err = function() end }
 end
 package.preload["weread.lib.protocol"] = function()
-    return { is_mp_book = function() return false end }
+    return { is_mp_book = function(id) return tostring(id):match("^MP_WXS_") ~= nil end }
 end
 package.preload["weread.lib.plugin_util"] = function()
     return {
@@ -81,12 +91,22 @@ end
 local shown = {}
 package.preload["weread.ui.library_view"] = function()
     return {
+        getLayout = function(cover)
+            if cover then
+                return require("weread.lib.cover_layout").calculate{ width = 600, height = 800, reserved_height = 127 }
+            end
+            return { page_size = 10 }
+        end,
         show = function(data, callbacks)
             shown[#shown + 1] = { data = data, callbacks = callbacks }
             local source = data.mode == "public_account" and data.accounts or data.books
             local page_count = math.max(1, math.ceil(#source / data.page_size))
             local page = math.max(1, math.min(data.page or 1, page_count))
-            return { page = page, page_count = page_count }
+            return { page = page, page_count = page_count, page_size = data.page_size,
+                on_refresh = callbacks.on_refresh,
+                setRefreshing = function(self, busy) self.refreshing = busy end,
+                getScrollOffset = function() return { x = 0, y = 125 } end,
+            }
         end,
     }
 end
@@ -107,6 +127,7 @@ local host = {
     shelf_regular = shelf,
     shelf_mp = {},
     settings = {
+        set = function() end, flush = function() end,
         get = function(_self, key, default)
             if key == "books" then return {} end
             if key == "shelf" then return shelf_settings end
@@ -176,14 +197,14 @@ host.shelf_regular = shelf
 host:showShelfView("books", nil, shown[6], {})
 expect(shown[7].data.cover_mode == true and shown[7].data.paged == true,
     "cover view did not enforce lightweight page rendering")
-expect(shown[7].data.page_size == 6,
-    "cover view did not limit the current page to six books")
+expect(shown[7].data.page_size == 9,
+    "cover view did not limit the current page to nine books")
 host:showShelfView("public_account", nil, shown[7], {})
 expect(shown[8].data.cover_mode == false and shown[8].data.paged == false,
     "cover preference changed the public-account list")
 
 local cover_requests = {}
-for index = 1, 8 do shelf[index].cover = "https://cdn.example/" .. tostring(index) end
+for index = 1, 12 do shelf[index].cover = "https://cdn.example/" .. tostring(index) end
 host.isNetworkOnline = function() return true end
 host.client = {
     get_binary = function(_self, url, options)
@@ -195,11 +216,11 @@ cover_path_lookups = 0
 host:showShelfView("books", nil, shown[8], {})
 expect(shown[9].data.cover_loading[shelf[1]] == true,
     "uncached online cover did not show its loading state")
-expect(#cover_requests == 6,
-    "cover view fetched books outside the current six-item page: "
+expect(#cover_requests == 9,
+    "cover view fetched books outside the current nine-item page: "
         .. tostring(#cover_requests) .. " lookups=" .. tostring(cover_path_lookups)
         .. " page=" .. tostring(shown[9] and shown[9].data.page))
-expect(subprocess_runs == 6,
+expect(subprocess_runs == 9,
     "cover network and thumbnail work did not run in background subprocesses")
 expect(cover_requests[1].options.skip_cookie == true
         and cover_requests[1].options.persist_response_cookies == false,
@@ -218,5 +239,111 @@ host:fetchVisibleShelfCovers(unsafe_view, {
 }, {})
 expect(#cover_requests == requests_before_unsafe_url,
     "cover loader accepted a non-HTTPS cover source")
+
+-- Groups are projected once per snapshot and share the existing shelf records.
+local grouped_books = {}
+for index = 1, 30 do grouped_books[index] = { bookId = tostring(index), title = "Group book " .. index } end
+local membership = {}
+for index = 1, 20 do membership[index] = tostring(index) end
+local archives = {
+    { archiveId = 7, name = "History", bookIds = membership },
+    { archiveId = 8, name = "Empty", bookIds = {} },
+    { archiveId = 9, name = "Accounts", bookIds = { "MP_WXS_1" } },
+}
+shelf_settings.view_mode = "list"
+shelf_settings.paginated = true
+host.isNetworkOnline = function() return false end
+host:applyShelfSnapshot(grouped_books, archives)
+host:showShelfView("books")
+local groups = host.shelf_groups
+expect(#groups == 3 and groups[1].books[1] == grouped_books[1],
+    "snapshot groups were not projected onto the shared book records")
+shown[#shown].callbacks.on_select_group("archive:7")
+expect(shown[#shown].data.mode == "books" and #shown[#shown].data.books == 20
+        and shown[#shown].data.group_label == "History", "group created a separate content mode")
+shown[#shown].callbacks.on_page_changed(2)
+expect(host.shelf_groups == groups and shown[#shown].data.page == 2,
+    "paging rebuilt groups or lost the selected page")
+shown[#shown].callbacks.on_switch("public_account")
+shown[#shown].callbacks.on_switch("books")
+expect(shown[#shown].data.group_key == "archive:7" and shown[#shown].data.page == 2,
+    "switching content type discarded the book group or page")
+shown[#shown].callbacks.on_select_group("archive:8")
+expect(#shown[#shown].data.books == 0, "empty group fell back to the entire shelf")
+shown[#shown].callbacks.on_select_group("__ungrouped__")
+expect(#shown[#shown].data.books == 10, "uncategorized group has wrong membership")
+shown[#shown].callbacks.on_select_group("archive:7")
+for index = 1, 12 do grouped_books[index].cover = "https://cdn.example/group-" .. index end
+host.isNetworkOnline = function() return true end
+shown[#shown].callbacks.on_display_change("view_mode", "cover")
+expect(shown[#shown].data.cover_mode and shown[#shown].data.group_key == "archive:7",
+    "display mode change discarded the group")
+host.isNetworkOnline = function() return false end
+shown[#shown].callbacks.on_display_change("view_mode", "list")
+shown[#shown].callbacks.on_page_changed(2)
+
+local pending, fetches, written_archives
+host.requireLogin = function() return true end
+host.showBusy = function() end
+host.closeBusy = function() end
+host.showInfo = function() end
+host.runOnlineTask = function(_self, _label, callback) pending = callback return true end
+host.client.get_shelf = function()
+    fetches = (fetches or 0) + 1
+    return { books = grouped_books, archive = { archives[2], archives[1] } }
+end
+host.library_db = { cacheShelf = function(_self, _books, value) written_archives = value end }
+local before_refresh = shown[#shown]
+local cover_generation = host.shelf_cover_generation
+host.shelf_cover_pending = { view = host.shelf_view }
+before_refresh.callbacks.on_refresh()
+before_refresh.callbacks.on_refresh()
+expect(host.shelf_refreshing and fetches == nil, "refresh was not scheduled or guarded")
+expect(host.shelf_cover_generation > cover_generation and host.shelf_cover_pending == nil,
+    "refresh left a thumbnail batch able to replace the view")
+pending()
+expect(fetches == 1 and written_archives[2].archiveId == 7 and not host.shelf_refreshing,
+    "refresh duplicated requests or omitted archive caching")
+expect(shown[#shown].data.page == 2 and shown[#shown].data.group_key == "archive:7"
+        and shown[#shown].data.scroll_offset.y == 125,
+    "refresh lost group, page or scroll position after archive reorder")
+
+host.client.get_shelf = function() return { books = grouped_books, archive = {} } end
+shown[#shown].callbacks.on_refresh()
+pending()
+expect(shown[#shown].data.group_key == nil and shown[#shown].data.page == 1
+        and #shown[#shown].data.books == 30, "deleted group did not fall back to all books")
+host.runOnlineTask = function() return false end
+shown[#shown].callbacks.on_refresh()
+expect(not host.shelf_refreshing, "offline refresh stayed locked")
+host.runOnlineTask = function(_self, _label, callback) callback() return true end
+host.client.get_shelf = function() error("fixture") end
+local before_failure = #shown
+shown[#shown].callbacks.on_refresh()
+expect(#shown == before_failure and not host.shelf_refreshing, "failed refresh replaced the shelf or stayed locked")
+host.library_db.getShelf = function() return grouped_books end
+host.library_db.getShelfArchives = function() return archives end
+host:showBookshelf()
+expect(#host.shelf_groups == 3, "cached opening lost archive data")
+expect(#dialogs == 0, "current group cache triggered the upgrade hint")
+host.library_db.getShelfArchives = function() return {} end
+host:showBookshelf()
+expect(#dialogs == 0, "synced shelf without groups triggered the upgrade hint")
+host.library_db.getShelfArchives = function() return nil end
+host:showBookshelf()
+expect(#dialogs == 1 and shelf_settings.groups_refresh_hint_shown,
+    "old shelf cache did not show and remember the one-time upgrade hint")
+local hinted_view = host.shelf_view
+local saved_refresh = host.refreshBookshelf
+local refreshed_view
+host.refreshBookshelf = function(_self, view) refreshed_view = view end
+dialogs[1].ok_callback()
+expect(refreshed_view == hinted_view, "upgrade hint did not refresh the visible shelf")
+host.refreshBookshelf = saved_refresh
+host:showBookshelf()
+expect(#dialogs == 1, "old shelf cache repeated the upgrade hint before a refresh")
+host.shelf_group_key = "archive:7"
+host:onWeReadAccountChanged()
+expect(host.shelf_groups == nil and host.shelf_group_key == nil, "account switch retained old groups")
 
 print(("bookshelf_pagination_spec: %d checks"):format(checks))

@@ -104,6 +104,7 @@ package.preload["weread.lib.external_annotations_db"] = function()
 end
 local Store = require("weread.lib.annotation_store")
 return {
+    connect = connect,
     new = function() return Store:new({}) end,
     legacy_entries = legacy_entries, legacy_checkpoints = legacy_checkpoints,
     cleanup = function()

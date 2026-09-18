@@ -102,6 +102,12 @@ function LibraryDB:open()
                 PRIMARY KEY (book_id, chapter_uid)
             ) WITHOUT ROWID
         ]])
+        db:exec([[
+            CREATE TABLE IF NOT EXISTS shelf_state (
+                name TEXT PRIMARY KEY,
+                payload TEXT NOT NULL
+            ) WITHOUT ROWID
+        ]])
         -- Adds the richer detail snapshot for databases created by an early
         -- development build. Duplicate-column errors are intentionally ignored.
         pcall(function() db:exec("ALTER TABLE books ADD COLUMN detail_payload TEXT") end)
@@ -115,7 +121,7 @@ function LibraryDB:open()
     return db
 end
 
-function LibraryDB:cacheShelf(books)
+function LibraryDB:cacheShelf(books, archives)
     local db = self:open()
     if not db or type(books) ~= "table" then return false end
     local transaction_open = false
@@ -148,6 +154,18 @@ function LibraryDB:cacheShelf(books)
         end
         close_statement(stmt)
         stmt = nil
+        -- Keep groups and their membership in the same snapshot as the books.
+        if archives ~= nil then
+            local payload, encode_err = encode(archives)
+            if not payload then error(encode_err) end
+            stmt = db:prepare([[
+                INSERT INTO shelf_state (name, payload) VALUES ('archives', ?)
+                ON CONFLICT(name) DO UPDATE SET payload=excluded.payload
+            ]])
+            stmt:reset():bind(payload):step()
+            close_statement(stmt)
+            stmt = nil
+        end
         db:exec("COMMIT")
         transaction_open = false
     end)
@@ -156,6 +174,20 @@ function LibraryDB:cacheShelf(books)
     pcall(function() db:close() end)
     if not ok then logger.warn("library_db shelf write failed:", err) end
     return ok
+end
+
+function LibraryDB:getShelfArchives()
+    local db = self:open()
+    if not db then return nil end
+    local stmt, archives
+    local ok = pcall(function()
+        stmt = db:prepare("SELECT payload FROM shelf_state WHERE name='archives'")
+        local row = stmt:reset():step()
+        archives = row and decode(row[1]) or nil
+    end)
+    close_statement(stmt)
+    pcall(function() db:close() end)
+    return ok and archives or nil
 end
 
 function LibraryDB:getShelf()

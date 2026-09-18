@@ -32,6 +32,7 @@ end
 function Widget:getHeight()
     return self:getSize().h
 end
+function Widget:free() end
 
 local function widget_module()
     return Widget:extend{}
@@ -80,14 +81,15 @@ package.preload["ui/geometry"] = function()
 end
 package.preload["ui/size"] = function()
     return {
-        border = { thin = 1 },
+        border = { thin = 1, window = 2 },
         padding = { small = 2, default = 4, large = 8 },
     }
 end
 package.preload["ui/uimanager"] = function()
     return {
-        show = function(widget) shown[#shown + 1] = widget end,
+        show = function(_self, widget) shown[#shown + 1] = widget end,
         close = function() end,
+        nextTick = function(_self, callback) callback() end,
         setDirty = function() end,
     }
 end
@@ -119,6 +121,7 @@ for _, name in ipairs({
     "ui/widget/horizontalgroup",
     "ui/widget/horizontalspan",
     "ui/widget/imagewidget",
+    "ui/widget/iconwidget",
     "ui/widget/linewidget",
     "ui/widget/overlapgroup",
     "ui/widget/titlebar",
@@ -127,6 +130,14 @@ for _, name in ipairs({
     "ui/widget/widget",
 }) do
     package.preload[name] = widget_module
+end
+package.preload["ui/widget/button"] = function()
+    local Button = Widget:extend{}
+    function Button:init()
+        self.label_widget = Widget:new{}
+        self.label_container = { self.label_widget }
+    end
+    return Button
 end
 
 package.preload["weread.lib.i18n"] = function()
@@ -138,6 +149,32 @@ package.preload["weread.lib.book_reviews"] = function()
         format_rating = tostring,
         preview = function(text) return text end,
     }
+end
+
+-- Optional geometry probe against KOReader's actual layout containers and Button.
+-- Font rasterization, framebuffer, screen and event loop remain test doubles.
+local native_widgets = os.getenv("KOREADER_WIDGET_DIR")
+if native_widgets then
+    package.preload["ui/bidi"] = function() return { mirroredUILayout = function() return false end } end
+    package.preload["util"] = function() return {} end
+    package.preload["gettext"] = function() return function(value) return value end end
+    package.preload["logger"] = function() return { dbg = function() end } end
+    package.preload["dbg"] = function() return { dassert = assert } end
+    package.preload["ui/widget/iconwidget"] = widget_module
+    package.preload["ui/widget/textboxwidget"] = widget_module
+    G_defaults = { readSetting = function() return 24 end }
+    function Widget:isTruncated() return false end
+    function Widget:free() end
+    local size = require("ui/size")
+    size.border.button, size.padding.button = 1, 4
+    for _, name in ipairs({
+        "ui/widget/container/widgetcontainer", "ui/widget/container/framecontainer",
+        "ui/widget/container/centercontainer", "ui/widget/container/leftcontainer",
+        "ui/widget/horizontalgroup", "ui/widget/verticalgroup",
+        "ui/widget/horizontalspan", "ui/widget/verticalspan", "ui/widget/button",
+    }) do
+        package.preload[name] = function() return dofile(native_widgets .. "/frontend/" .. name .. ".lua") end
+    end
 end
 
 local LibraryView = require("weread.ui.library_view")
@@ -297,5 +334,100 @@ ok, error_message = pcall(function()
 end)
 expect(ok, "empty review list failed to build: " .. tostring(error_message))
 expect(#shown == 11, "all bookshelf and empty-state views should be shown")
+
+expect(#paged_view._header_buttons == 5 and paged_view._tab_buttons == nil
+        and paged_view._action_primary == nil, "shelf retained its permanent tabs or toolbars")
+local width = 0
+for _, button in ipairs(paged_view._header_buttons) do width = width + button.width end
+expect(width == 600, "compact header controls escaped the screen width")
+changed_page = nil
+expect(paged_view:onShelfSwipe(nil, { direction = "west" }) and changed_page == 3,
+    "left swipe did not use the same next page as the button")
+expect(not paged_view:onShelfSwipe(nil, { direction = "north" }), "shelf captured vertical scrolling")
+expect(not continuous_view:onShelfSwipe(nil, { direction = "west" })
+        and continuous_view.ges_events.ShelfSwipe == nil, "continuous list acquired a page swipe handler")
+
+local function dialog_module()
+    local Dialog = Widget:extend{}
+    function Dialog:init()
+        self[1] = { radius = 20 }
+        self.movable = { { radius = 20 } }
+        self.page_info = {}
+        if self.items_per_page then
+            self.inner_dimen = { h = self.height - 4 }
+            self.item_dimen = {}
+            self:_recalculateDimen()
+        end
+    end
+    function Dialog:_recalculateDimen() end
+    return Dialog
+end
+package.preload["ui/widget/menu"] = dialog_module
+package.preload["ui/widget/buttondialog"] = dialog_module
+local chosen_group, changed_type, display_key, display_value
+local selector_view = LibraryView.show({
+    mode = "books", books = books, accounts = {}, paged = true,
+    group_key = "archive:1", group_label = "A long group name", total_books = 100,
+    groups = { { key = "archive:1", label = "A long group name", books = books } },
+}, {
+    on_select_group = function(key) chosen_group = key end,
+    on_switch = function(mode) changed_type = mode end,
+    on_display_change = function(key, value) display_key, display_value = key, value end,
+})
+selector_view._header_buttons[2].callback()
+local selector = shown[#shown]
+expect(selector.items_per_page == 2 and #selector.item_table == 2 and selector.height < 400,
+    "group chooser did not reuse a paginated native menu")
+expect(selector.custom_title_bar[1].height == selector_view._header_buttons[2].height,
+    "content switcher is shorter than the bookshelf header")
+expect(selector.page_info.handleEvent and not selector.page_info:handleEvent({})
+        and selector.item_dimen.h * selector.items_per_page == selector.available_height,
+    "single-page picker retained footer controls or wasted row space")
+selector.layout, selector.selected = { { {} } }, { y = 1 }
+selector:mergeTitleBarIntoLayout()
+expect(selector.selected.y == 3 and selector.layout[1][1] == selector.custom_title_bar[1]
+        and selector.layout[2][1] == selector.custom_title_bar[2],
+    "content tabs are not reachable using vertical five-way navigation")
+selector.item_table[2].callback()
+expect(chosen_group == "archive:1", "group picker used position instead of stable server ID")
+selector.custom_title_bar[2].callback()
+expect(changed_type == "public_account", "content picker lost the public-account action")
+selector_view:showOptions()
+local options_dialog = shown[#shown]
+options_dialog.buttons[3][2].callback()
+expect(display_key == "view_mode" and display_value == "cover", "cover option is missing from the shelf menu")
+options_dialog.buttons[4][2].callback()
+expect(display_key == "paginated" and display_value == false, "continuous-list option is missing")
+selector_view.groups = {}
+for i = 1, 11 do selector_view.groups[i] = { key = tostring(i), label = tostring(i), books = {} } end
+selector_view:showSourceMenu()
+local fitting_selector = shown[#shown]
+expect(fitting_selector.items_per_page == 12 and fitting_selector.page_info.paintTo ~= nil,
+    "picker paginated groups that still fit on one screen")
+for i = 12, 25 do selector_view.groups[i] = { key = tostring(i), label = tostring(i), books = {} } end
+selector_view:showSourceMenu()
+local long_selector = shown[#shown]
+expect(long_selector.items_per_page < #long_selector.item_table and long_selector.height <= 800
+        and long_selector.page_info.handleEvent == nil,
+    "overflowing picker lost pagination or exceeded the screen")
+if native_widgets then
+    local layout = LibraryView.getLayout(true, 100)
+    expect(layout.rows == 3 and layout.page_size == 9, "compact 600x800 shelf did not reclaim a third cover row")
+    local native_view = LibraryView.show({
+        mode = "books", books = books, accounts = {}, paged = true,
+        cover_mode = true, cover_columns = layout.columns, cover_rows = layout.rows,
+        page_size = layout.page_size,
+    }, {})
+    expect(native_view[1][1]:getSize().h == 800, "native header, viewport and pager exceed the screen height")
+    expect(native_view[1][1][1]:getSize().h == 73, "native header is taller than a single button row")
+    expect(native_view[1][1][3]:getSize().h == 54, "native pager padding escaped its reserved height")
+    local list_layout = LibraryView.getLayout(false, 100)
+    local native_list = LibraryView.show({
+        mode = "books", books = books, accounts = {}, paged = true, page_size = list_layout.page_size,
+    }, {})
+    expect(native_list.scroll[1]:getSize().h <= native_list.scroll.dimen.h,
+        "native list rows require scrolling in page mode")
+    print("native bookshelf geometry: real KOReader Button and layout containers passed")
+end
 
 print(("empty_state_face_spec: %d checks"):format(checks))

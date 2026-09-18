@@ -67,6 +67,84 @@ assert(finish(new("full", chapters)))
 assert(#calls == count, "opening full book re-downloaded single-chapter data")
 assert(store:get("book", "projection", "full:1"), "full EPUB did not create its own coordinates")
 
+-- Diagnostics must leave cached matching and its network-free reopen intact.
+local stages = {}
+local function perf(stage)
+    stages[#stages + 1] = stage
+    return 0
+end
+assert(finish(new("timed", { chapters[1] }, { offline = true, perf = perf })))
+assert(#calls == count and store:get("book", "projection", "timed:1").stats.located == 2,
+    "opening diagnostics changed matching results or initiated network work")
+assert(table.concat(stages, ",") == "chapter_cache_begin,chapter_source_cache,chapter_projection_cache,chapter_match_begin,chapter_match,chapter_save",
+    "opening diagnostics omit a cache, matching or persistence boundary")
+stages = {}
+assert(finish(new("timed", { chapters[1] }, { offline = true, perf = perf })))
+assert(#calls == count and table.concat(stages, ",") == "chapter_cache_begin,chapter_cached",
+    "cached reopen diagnostics caused unnecessary matching")
+
+-- Reprojection, including an old checkpoint carrying embedded popup items,
+-- must retain the shared source/thought rows and save positions only.
+local json = require("json")
+local Annotations = require("weread.lib.annotations")
+local build_items, builds = Annotations.buildThoughtPopupItems, 0
+Annotations.buildThoughtPopupItems = function(review)
+    builds = builds + 1
+    return build_items(review)
+end
+local source_before = json.encode(store:get("book", "source", "1"))
+local thoughts_before = json.encode(store:list("book", "thought"))
+local expected = store:get("book", "projection", "timed:1")
+local saved_record = json.decode(json.encode(expected.records[1]))
+saved_record.items = { { content = "old checkpoint thought" } }
+store:put("book", "matching", "lean-resume:1", {
+    records = { saved_record }, stats = { total = 2, located = 1, unmatched = 0, missing_text = 0, partial = 0 },
+    next_index = 2, cursor_xp = saved_record.pos0,
+    revision = expected.revision, matcher_version = expected.matcher_version, range_key = expected.range_key,
+}, "1")
+local write = store.write
+local checkpoints = 0
+store.write = function(self, book_id, changes)
+    for _, change in ipairs(changes) do
+        assert(change.kind == "matching" or change.kind == "projection" or change.kind == "status",
+            "reprojection rewrote unchanged shared data: " .. change.kind)
+        for _, record in ipairs(change.value and change.value.records or {}) do
+            assert(record.items == nil, "checkpoint retained embedded thoughts")
+        end
+        if change.kind == "matching" and change.value then checkpoints = checkpoints + 1 end
+    end
+    return write(self, book_id, changes)
+end
+for _, key in ipairs({ "lean", "lean-resume" }) do
+    assert(finish(new(key, { chapters[1] }, { store = store, offline = true })))
+    assert(json.encode(store:get("book", "projection", key .. ":1")) == json.encode(expected),
+        "lean matching changed positions or statistics")
+end
+store.write = nil
+Annotations.buildThoughtPopupItems = build_items
+assert(checkpoints == 2 and builds == 0 and #calls == count,
+    "cached matching rebuilt thoughts, skipped checkpoints or used the network")
+assert(json.encode(store:get("book", "source", "1")) == source_before
+    and json.encode(store:list("book", "thought")) == thoughts_before,
+    "cached matching changed shared source or popup data")
+
+-- Legacy completed downloads have a source snapshot but no per-range popup
+-- rows. They must still materialize thoughts when first projected offline.
+helper.legacy_checkpoints["/legacy.epub"] = {
+    book_id = "book", started_at = 123, chapters = {
+        { chapter_uid = "7", complete = true, underlines = { { range = "1-2", markText = "alpha" } },
+            reviews = { { range = "1-2", pageReviews = {
+                { review = { content = "legacy thought", author = {} } },
+            } } } },
+    },
+}
+store:importLegacy("book", "/legacy.epub", "legacy-document")
+assert(not store:get("book", "thought", "7:1-2"))
+assert(finish(new("legacy-document", { { chapterUid = "7" } }, { offline = true })))
+assert(store:get("book", "thought", "7:1-2")[1].content == "legacy thought"
+    and store:get("book", "projection", "legacy-document:7").stats.located == 1 and #calls == count,
+    "optimization skipped legacy thought migration")
+
 -- Matcher upgrades must invalidate only the document projection. Downloaded
 -- chapter data remains reusable and is projected again without network work.
 local stale = store:get("book", "projection", "full:1")

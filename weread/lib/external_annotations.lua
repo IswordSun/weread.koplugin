@@ -409,6 +409,11 @@ function ExternalAnnotations.locate(document, chapters, options)
     assert(type(document) == "table", "document is required")
     options = options or {}
     local records = options.resume and options.resume.records or {}
+    -- Shared-book thoughts are loaded on tap. Strip old checkpoint payloads
+    -- too, so resuming never writes those large items back at every checkpoint.
+    if options.include_items == false then
+        for _, record in ipairs(records) do record.items = nil end
+    end
     local stats = options.resume and options.resume.stats or { total = 0, located = 0, missing_text = 0, unmatched = 0, partial = 0 }
     pos_elapsed = 0
     -- Whole-locate cursor for books without chapter ranges, so repeated
@@ -549,7 +554,8 @@ function ExternalAnnotations.locate(document, chapters, options)
                 local result, partial, mode, hits = locate_quote(quote)
                 if result then
                     global_cursor_xp = result.start
-                    local review = review_for_range(chapter.reviews, underline_range)
+                    local review = options.include_items ~= false
+                        and review_for_range(chapter.reviews, underline_range)
                     records[#records + 1] = {
                         id = table.concat({ book_id, uid, underline_range }, ":"),
                         pos0 = result.start,
@@ -558,7 +564,8 @@ function ExternalAnnotations.locate(document, chapters, options)
                         book_id = book_id,
                         chapter_uid = uid,
                         range = underline_range,
-                        items = review and Annotations.buildThoughtPopupItems(review) or {},
+                        items = options.include_items ~= false
+                            and (review and Annotations.buildThoughtPopupItems(review) or {}) or nil,
                         partial = partial or nil,
                     }
                     stats.located = stats.located + 1

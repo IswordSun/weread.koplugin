@@ -72,11 +72,17 @@ end
 function M:_prepareAnnotationContext(online, refresh_catalog)
     local path = file(self)
     if not path or not self:_xpointerOverlayPrototypeAvailable() then return nil end
+    local perf = PluginUtil.reader_open_perf
+    local started = perf("context_begin", nil, "session=", self._reader_session_gen)
     local binding = self:_annotationBinding()
+    started = perf("annotation_binding", started, "book_id=", binding and binding.book_id or "none")
     if not binding then return nil end
     local context = self._annotation_context
     if not refresh_catalog and context and context.path == path and context.book_id == tostring(binding.book_id)
-        and (#context.chapters > 0 or not online) then return context end
+        and (#context.chapters > 0 or not online) then
+        perf("context_cached", started)
+        return context
+    end
     local store = self:_annotationStore()
     local books = self.settings:get("books", {})
     local book_id = tostring(binding.book_id)
@@ -93,7 +99,9 @@ function M:_prepareAnnotationContext(online, refresh_catalog)
         store:put(book_id, "meta", "catalog", catalog)
         if refresh_catalog then store:put(book_id, "meta", "prune_catalog", catalog) end
     end
+    started = perf("annotation_catalog", started, "chapters=", #(catalog or {}))
     local selected, ranges = Chapters.map(self.ui.document, catalog or {}, descriptor)
+    started = perf("chapter_mapping", started, "chapters=", #selected)
     local prune_catalog = store:get(book_id, "meta", "prune_catalog")
     if prune_catalog then
         local valid, retained = {}, {}
@@ -113,10 +121,13 @@ function M:_prepareAnnotationContext(online, refresh_catalog)
         selected = mapped
     end
     local document_key = store.documentKey(path)
+    started = perf("document_identity", started)
     store:importLegacy(book_id, path, document_key)
+    started = perf("legacy_import", started)
     context = { path = path, book_id = book_id, binding = binding, book = book,
         store = store, document_key = document_key, chapters = selected, ranges = ranges,
         descriptor = descriptor, statuses = store:reconcileRanges(book_id, document_key, ranges) }
+    perf("saved_annotation_status", started)
     self._annotation_context = context
     return context
 end
@@ -356,6 +367,13 @@ function M:_runAnnotationJob(context, options)
     if options.prefetch then
         return self:_runAnnotationPrefetchWorker(request, context, options)
     end
+    local function perf(stage, started, ...)
+        return PluginUtil.reader_open_perf(stage, started,
+            "book_id=", context.book_id, "session=", request.session, ...)
+    end
+    local queued = perf("annotation_job_queued", nil,
+        "background=", options.background == true, "chapters=", #(options.chapters or context.chapters))
+    local job_started
     if not options.background then
         local job_chapters = options.chapters or context.chapters
         request.progress = require("weread.ui.download_dialog"):new{
@@ -373,6 +391,7 @@ function M:_runAnnotationJob(context, options)
     local source_book = context.book or { bookId = context.book_id, book_id = context.book_id,
         title = context.binding.title, format = context.binding.format }
     request.job = Sync:new{
+        perf = perf,
         store = context.store, client = self.client, book_id = context.book_id,
         chapters = options.chapters or context.chapters, ranges = context.ranges,
         document = not options.prefetch and self.ui.document or nil,
@@ -404,8 +423,10 @@ function M:_runAnnotationJob(context, options)
             self:_cancelUnifiedAnnotationSync()
             return
         end
+        if not job_started then job_started = perf("annotation_job_start", queued) end
         local done, state = request.job:step()
         if done == nil or done then
+            perf("annotation_job_total", job_started, "ok=", done == true)
             local pending = self._annotation_pending_prefetch
             self:_cancelUnifiedAnnotationSync()
             if done == nil then
@@ -543,9 +564,12 @@ function M:ensureAnnotationDisplay()
 end
 
 function M:onUnifiedAnnotationsReady()
+    local perf = PluginUtil.reader_open_perf
+    local started = perf("annotations_begin", nil, "session=", self._reader_session_gen)
     self._unified_annotations_active = nil
     self._annotation_context = nil
     local ok, context = pcall(self._prepareAnnotationContext, self, false)
+    started = perf("context_total", started, "ok=", ok, "available=", ok and context ~= nil)
     if not ok then logger.warn("annotation context:", context); return end
     if not context then return end
     -- Recover partial chapter selections created by older builds that wrote a
@@ -554,7 +578,9 @@ function M:onUnifiedAnnotationsReady()
         context.store:put(context.book_id, "display", context.document_key, true)
     end
     self._unified_annotations_active = self:_usesUnifiedAnnotations()
+    started = perf("annotation_display_state", started)
     self:_refreshAnnotationOverlay()
+    started = perf("saved_annotation_overlay", started)
     if context.store:get(context.book_id, "meta", "enabled")
         and not context.store:get(context.book_id, "manual_only", context.document_key) then
         -- Only already cached chapters are matched automatically on open.
@@ -578,8 +604,12 @@ function M:onUnifiedAnnotationsReady()
             and not sources[Chapters.uid(context.chapters[1])] then
             cached = context.chapters
         end
+        perf("automatic_match_selection", started, "pending_chapters=", #cached,
+            "mapped_chapters=", #context.chapters)
         if #cached > 0 then self:_runAnnotationJob(context, {
             background = true, offline = not self:isNetworkConnected(), chapters = cached }) end
+    else
+        perf("automatic_match_disabled", started)
     end
 end
 

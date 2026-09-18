@@ -159,7 +159,7 @@ end
 
 function PositionMapper.local_to_remote(chapters, fraction, options)
     options = options or {}
-    local map = catalog(chapters)
+    local map = options.catalog or catalog(chapters)
     if map.total_words <= 0 then return nil, "catalog_empty" end
     fraction = clamp(fraction, 0, 1)
 
@@ -168,12 +168,15 @@ function PositionMapper.local_to_remote(chapters, fraction, options)
     local overall_fraction
     if options.is_full_book then
         local target = fraction * map.total_words
-        for _index, item in ipairs(map.chapters) do
-            if item.words > 0 and target < item.after then
-                selected = item
-                break
-            end
+        -- Cumulative word counts are nondecreasing. The first end strictly
+        -- after the target also skips empty chapters at a boundary.
+        local low, high = 1, #map.chapters
+        while low <= high do
+            local middle = math.floor((low + high) / 2)
+            if target < map.chapters[middle].after then high = middle - 1
+            else low = middle + 1 end
         end
+        selected = map.chapters[low]
         if not selected then
             for index = #map.chapters, 1, -1 do
                 if map.chapters[index].words > 0 then

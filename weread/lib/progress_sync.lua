@@ -174,10 +174,12 @@ function ProgressSync:capture_local()
             book_id = book_id,
             book = book,
             chapters = chapters,
+            position_catalog = PositionMapper.catalog(chapters),
             current_chapter = current_chapter,
             is_full_book = is_full_book == true,
             path = path,
         }
+        cached = self.document_context
     end
     local fraction = self:_local_fraction()
     if fraction == nil then return nil, "position_unavailable" end
@@ -185,6 +187,7 @@ function ProgressSync:capture_local()
         chapters,
         fraction,
         {
+            catalog = cached.position_catalog,
             is_full_book = is_full_book == true,
             current_chapter_uid = current_chapter
                 and (current_chapter.chapterUid or current_chapter.chapterId),

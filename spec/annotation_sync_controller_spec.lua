@@ -31,7 +31,8 @@ package.preload["weread.ui.download_dialog"] = function()
 end
 package.preload["weread.lib.content"] = function() return {} end
 package.preload["weread.lib.plugin_util"] = function()
-    return { tr = function(s) return s end, T = function(s, ...) local v = {...}
+    return { reader_open_perf = function() return 0 end,
+        tr = function(s) return s end, T = function(s, ...) local v = {...}
         return (s:gsub("%%(%d+)", function(i) return tostring(v[tonumber(i)]) end)) end }
 end
 local Controller = require("weread.ui.annotation_sync_controller")

@@ -47,4 +47,12 @@ function PluginUtil.thought_perf(stage, started, ...)
         "ms=", string.format("%.1f", elapsed), ...)
 end
 
+-- KOReader's monotonic clock includes I/O and time spent yielding to the UI.
+function PluginUtil.reader_open_perf(stage, started, ...)
+    local now = time.now()
+    logger.info("reader_open_perf", "stage=", stage,
+        "wall_ms=", string.format("%.1f", started and tonumber(now - started) / 1000 or 0), ...)
+    return now
+end
+
 return PluginUtil

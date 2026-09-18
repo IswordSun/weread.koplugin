@@ -103,23 +103,9 @@ function Overlay:_orderedStart(document, page_start)
     return low
 end
 
-local function draw_boxes(overlay, bb, _x, _y, boxes)
-    overlay.visible = boxes
-    local style = overlay.style
-    if not style then
-        local Device = require("device")
-        local BB = require("ffi/blitbuffer")
-        style = { width = math.max(1, Device.screen:scaleBySize(1)),
-            dash = Device.screen:scaleBySize(4), gap = Device.screen:scaleBySize(3),
-            color = BB.Color8(0x99) }
-        if overlay.ui.document.render_color and bb.paintRectRGB32 then
-            style.rgb = true
-            style.color = BB.ColorRGB32(0xD0, 0x80, 0x60, 0xFF)
-            if Device.screen.night_mode then style.color = style.color:invert() end
-        end
-    end
+local function merge_lines(boxes)
     -- Merge overlapping line spans before painting, so intersections never
-    -- darken. Keep the original text rectangles as generous hit targets.
+    -- darken. Reuse these spans with the page's cached screen rectangles.
     local lines = {}
     for _, entry in ipairs(boxes) do
         local rect = entry.rect
@@ -134,7 +120,24 @@ local function draw_boxes(overlay, bb, _x, _y, boxes)
             last.right = math.max(last.right, line.right)
         else merged[#merged + 1] = line end
     end
-    for _, line in ipairs(merged) do
+    return merged
+end
+
+local function draw_lines(overlay, bb, lines)
+    local style = overlay.style
+    if not style then
+        local Device = require("device")
+        local BB = require("ffi/blitbuffer")
+        style = { width = math.max(1, Device.screen:scaleBySize(1)),
+            dash = Device.screen:scaleBySize(4), gap = Device.screen:scaleBySize(3),
+            color = BB.Color8(0x99) }
+        if overlay.ui.document.render_color and bb.paintRectRGB32 then
+            style.rgb = true
+            style.color = BB.ColorRGB32(0xD0, 0x80, 0x60, 0xFF)
+            if Device.screen.night_mode then style.color = style.color:invert() end
+        end
+    end
+    for _, line in ipairs(lines) do
         for left = line.x, line.right - 1, style.dash + style.gap do
             local width = math.min(style.dash, line.right - left)
             if style.rgb then bb:paintRectRGB32(left, line.y, width, style.width, style.color)
@@ -231,22 +234,26 @@ function Overlay:paintTo(bb, x, y)
     local can_cache = self.view and self.view.view_mode == "page"
     local cache_key = tostring(self.generation) .. ":" .. tostring(page)
     local cached = can_cache and self.cache[cache_key] or nil
-    local boxes, candidates
+    local boxes, candidates, lines
     if cached then
         boxes = cached.boxes
         candidates = cached.candidates
+        lines = cached.lines
     else
         boxes, candidates = self:_computeVisible()
+        lines = merge_lines(boxes)
         if can_cache then
             self.cache_count = (self.cache_count or 0) + 1
             if self.cache_count > 4 then self.cache, self.cache_count = {}, 1 end
             self.cache[cache_key] = {
                 boxes = boxes,
                 candidates = candidates,
+                lines = lines,
             }
         end
     end
-    draw_boxes(self, bb, x, y, boxes)
+    self.visible = boxes
+    draw_lines(self, bb, lines)
     self.last_metrics = {
         candidates = candidates,
         boxes = #boxes,

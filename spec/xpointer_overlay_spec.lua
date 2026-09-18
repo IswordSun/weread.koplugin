@@ -25,6 +25,11 @@ local document = {
     end,
 }
 local draw_calls = 0
+local sort_calls, original_sort = 0, table.sort
+rawset(table, "sort", function(...)
+    sort_calls = sort_calls + 1
+    return original_sort(...)
+end)
 local view = { view_mode = "page" }
 local buffer = { paintRect = function(_self, x, y, w, h, color)
     draw_calls = draw_calls + 1
@@ -59,6 +64,9 @@ expect(overlay:hitTest({ x = 200, y = 200 }) == nil,
 overlay:paintTo(buffer, 0, 0)
 expect(box_calls == 1, "page cache did not avoid repeated XPointer projection")
 expect(overlay.last_metrics.cache_hit == true, "second paint did not report cache hit")
+expect(sort_calls == 1, "page repaint repeated underline sorting")
+expect(draw_calls == 24 and overlay:hitTest({ x = 20, y = 25 }).id == "visible",
+    "cached lines changed drawing or thought hit targets")
 
 -- Unified projections are ordered by their start XPointer. Build the interval
 -- prefix once, then page turns should skip records before/after the page while
@@ -98,11 +106,21 @@ expect(comparisons < 25,
 overlay:resetLayout()
 overlay:paintTo(buffer, 0, 0)
 expect(box_calls == 2, "layout reset did not invalidate screen box cache")
+expect(sort_calls == 2, "layout reset did not rebuild underline spans")
+
+-- Scroll positions may change within the same page number. Both rectangles
+-- and merged spans must follow the new viewport instead of using a page cache.
+view.view_mode = "scroll"
+overlay:paintTo(buffer, 0, 0)
+overlay:paintTo(buffer, 0, 0)
+expect(box_calls == 4 and sort_calls == 4,
+    "scroll mode reused stale page geometry")
+rawset(table, "sort", original_sort)
 
 overlay:setEnabled(false)
 overlay:paintTo(buffer, 0, 0)
 expect(#overlay.visible == 0, "disabled overlay retained stale hit boxes")
-expect(box_calls == 2, "disabled overlay performed document work")
+expect(box_calls == 4, "disabled overlay performed document work")
 
 local input_options, listed_items, saved_document, confirm_options, shown_popup
 package.preload["ui/uimanager"] = function()

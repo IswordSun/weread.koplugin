@@ -56,6 +56,39 @@ test("full book end maps to last chapter end", function()
     eq(position.chapter_offset, 600, "chapter offset")
 end)
 
+test("cached and uncached catalogs preserve empty chapter boundaries", function()
+    local sparse = {
+        { chapterUid = 1, wordCount = 0 },
+        { chapterUid = 2, wordCount = 100 },
+        { chapterUid = 3, wordCount = -10 },
+        { chapterUid = 4, wordCount = "300" },
+        { chapterUid = 5 },
+    }
+    local catalog = Mapper.catalog(sparse)
+    for _, case in ipairs({
+        { -1, 2, 0 }, { 0, 2, 0 }, { 0.125, 2, 50 },
+        { 0.25, 4, 0 }, { 0.5, 4, 100 }, { 1, 4, 300 }, { 2, 4, 300 },
+    }) do
+        for _, cached in ipairs({ false, true }) do
+            local position = assert(Mapper.local_to_remote(sparse, case[1], {
+                is_full_book = true, catalog = cached and catalog or nil,
+            }))
+            eq(position.chapter_uid, case[2], "boundary chapter")
+            eq(position.chapter_offset, case[3], "boundary offset")
+        end
+    end
+    local position = assert(Mapper.local_to_remote(sparse, 0.5, {
+        current_chapter_uid = 4, catalog = catalog,
+    }))
+    eq(position.chapter_offset, 150, "cached single chapter offset")
+    near(position.fraction, 0.625, 0.0001, "cached single chapter fraction")
+    local empty, reason = Mapper.local_to_remote({ { wordCount = 0 } }, 0.5, {
+        is_full_book = true,
+    })
+    eq(empty, nil, "empty catalog rejected")
+    eq(reason, "catalog_empty", "empty catalog reason")
+end)
+
 test("single chapter computes whole book percent", function()
     local position = assert(Mapper.local_to_remote(chapters, 0.5, {
         current_chapter_uid = 22,

@@ -151,6 +151,54 @@ local function fixture(remote, options)
     }
 end
 
+test("page turns reuse word counts and document changes rebuild them", function()
+    local word_reads = 0
+    local function chapter(uid, words)
+        return setmetatable({ chapterUid = uid }, { __index = function(_, key)
+            if key == "wordCount" then
+                word_reads = word_reads + 1
+                return words
+            end
+        end })
+    end
+    local catalog = {}
+    for index = 1, 5000 do catalog[index] = chapter(index, 10) end
+    local f = fixture(nil, { get_chapters = function() return catalog end })
+    f.values.sync.pull_on_open = false
+    f.sync:on_reader_ready()
+    f.drain()
+    eq(word_reads, 5000, "opening builds one word-count catalog")
+    for page = 26, 80 do
+        f.document.page = page
+        f.sync:on_page_update()
+    end
+    eq(word_reads, 5000, "page turns do not reread chapter word counts")
+    eq(f.sync.local_position.chapter_uid, 4001, "page turn chapter")
+    eq(f.sync.local_position.chapter_offset, 0, "page turn offset")
+
+    catalog = { chapter(44, 200), chapter(55, 800) }
+    f.document.page = 50
+    f.sync.detect_book = function() return "other" end
+    local position = assert(f.sync:capture_local())
+    eq(word_reads, 5002, "changed book rebuilds catalog even at the same path")
+    eq(position.book_id, "other", "fresh book detection is preserved")
+    eq(position.chapter_uid, 55, "new book chapter")
+    eq(position.chapter_offset, 300, "new book offset")
+
+    f.document.file = "/cache/other/chapter.epub"
+    f.sync.get_file_context = function() return 1, catalog[1], false end
+    position = assert(f.sync:capture_local())
+    eq(word_reads, 5004, "changed file rebuilds catalog")
+    eq(position.chapter_uid, 44, "single chapter file")
+    eq(position.chapter_offset, 100, "single chapter offset")
+    eq(position.percent, 10, "single chapter overall progress")
+    f.sync:on_close_document()
+    eq(f.sync.document_context, nil, "close releases the document catalog")
+    f.sync:on_reader_ready()
+    f.drain()
+    eq(word_reads, 5006, "reopen rebuilds catalog")
+end)
+
 test("matching open progress verifies the reporting gate", function()
     local f = fixture({
         bookId = "book",

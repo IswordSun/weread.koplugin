@@ -51,6 +51,23 @@ function CachedCorner:paintTo(bb, x, y)
     end
 end
 
+local CoverShadow = Widget:extend{
+    width = 1,
+    height = 1,
+    radius = 1,
+}
+
+function CoverShadow:init()
+    self.width = math.max(1, math.floor(tonumber(self.width) or 1))
+    self.height = math.max(1, math.floor(tonumber(self.height) or 1))
+    self.radius = math.max(1, math.floor(tonumber(self.radius) or 1))
+    self.dimen = Geom:new{ w = self.width, h = self.height }
+end
+
+function CoverShadow:paintTo(bb, x, y)
+    bb:paintRoundedRect(x, y, self.width, self.height, Blitbuffer.gray(0.5), self.radius)
+end
+
 local ShelfRow = InputContainer:extend{
     text = "",
     status = "",
@@ -133,16 +150,14 @@ local CoverCell = InputContainer:extend{
 }
 
 function CoverCell:init()
-    local padding = Size.padding.small
+    local metrics = CoverLayout.card{
+        width = self.width,
+        height = self.height,
+        size_scale = Screen:scaleBySize(1000) / 1000,
+    }
     local border = Size.border.thin
-    local cover_width = math.max(1, self.width - 2 * padding)
-    local label_height = math.min(
-        math.max(1, math.floor(self.height * 0.35)),
-        Screen:scaleBySize(52)
-    )
-    local cover_height = math.max(1, self.height - label_height)
-    local image_width = math.max(1, cover_width - 2 * padding - 2 * border)
-    local image_height = math.max(1, cover_height - 2 * padding - 2 * border)
+    local image_width = math.max(1, metrics.card_width - 2 * border)
+    local image_height = math.max(1, metrics.card_height - 2 * border)
     local cover_content
     if self.cover_path then
         local image
@@ -174,34 +189,39 @@ function CoverCell:init()
         }
         self._has_cover = false
     end
-    local cover_frame = CenterContainer:new{
-        dimen = Geom:new{ w = cover_width, h = cover_height },
-        FrameContainer:new{
-            width = cover_width,
-            height = cover_height,
-            margin = 0,
-            padding = padding,
-            bordersize = border,
-            background = Blitbuffer.COLOR_WHITE,
-            CenterContainer:new{
-                dimen = Geom:new{ w = image_width, h = image_height },
-                cover_content,
-            },
+    local shadow = CoverShadow:new{
+        width = metrics.card_width,
+        height = metrics.card_height,
+        radius = metrics.radius,
+    }
+    shadow.overlap_offset = { metrics.shadow, metrics.shadow }
+    local cover_card = FrameContainer:new{
+        width = metrics.card_width,
+        height = metrics.card_height,
+        margin = 0,
+        padding = 0,
+        bordersize = border,
+        radius = metrics.radius,
+        background = Blitbuffer.COLOR_WHITE,
+        CenterContainer:new{
+            dimen = Geom:new{ w = image_width, h = image_height },
+            cover_content,
         },
     }
     local cover_layers = {
-        dimen = Geom:new{ w = cover_width, h = cover_height },
-        cover_frame,
+        dimen = Geom:new{ w = metrics.cover_width, h = metrics.cover_height },
+        shadow,
+        cover_card,
     }
     self._has_cached_corner = self.cached == true
     if self._has_cached_corner then
         local corner_size = math.max(1, math.min(
-            cover_width,
-            cover_height,
+            metrics.card_width,
+            metrics.card_height,
             Screen:scaleBySize(16)
         ))
         local corner = CachedCorner:new{ size = corner_size }
-        corner.overlap_offset = { cover_width - corner_size, 0 }
+        corner.overlap_offset = { metrics.card_width - corner_size, 0 }
         cover_layers[#cover_layers + 1] = corner
         self._cached_corner_size = corner_size
     end
@@ -209,8 +229,8 @@ function CoverCell:init()
     local title = self.book.title or self.book.bookId or self.book.book_id or _("Untitled")
     local title_widget = TextWidget:new{
         text = title,
-        face = Font:getFace("cfont", 18),
-        max_width = cover_width,
+        face = Font:getFace("cfont", 17),
+        max_width = metrics.cover_width,
     }
     self.frame = FrameContainer:new{
         bordersize = 0,
@@ -223,8 +243,15 @@ function CoverCell:init()
             dimen = Geom:new{ w = self.width, h = self.height },
             VerticalGroup:new{
                 align = "center",
-                cover,
-                title_widget,
+                CenterContainer:new{
+                    dimen = Geom:new{ w = metrics.cover_width, h = metrics.cover_height },
+                    cover,
+                },
+                VerticalSpan:new{ width = metrics.title_gap },
+                CenterContainer:new{
+                    dimen = Geom:new{ w = metrics.cover_width, h = metrics.title_height },
+                    title_widget,
+                },
             },
         },
     }

@@ -73,4 +73,17 @@ local invalid = CoverLayout.calculate{
 expect(invalid.columns == 3 and invalid.rows == 2,
     "invalid geometry should fall back to Kindle Touch dimensions")
 
+local card = CoverLayout.card{ width = 200, height = 300, size_scale = 1 }
+expect(card.gutter == 6 and card.shadow == 3,
+    "cover card should reserve a stable gutter and shadow")
+expect(card.cover_width == 188 and card.cover_height == 258,
+    "cover card should reserve title space without consuming the cover")
+expect(card.card_width == 185 and card.card_height == 255,
+    "cover shadow should remain inside its shelf slot")
+
+local tiny_card = CoverLayout.card{ width = 1, height = 1, size_scale = 100 }
+expect(tiny_card.cover_width == 1 and tiny_card.cover_height == 1
+        and tiny_card.card_width == 1 and tiny_card.card_height == 1,
+    "tiny cover cards should remain drawable")
+
 print(("cover_layout_spec: %d checks"):format(checks))

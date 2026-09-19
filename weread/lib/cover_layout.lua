@@ -48,4 +48,31 @@ function CoverLayout.calculate(options)
     }
 end
 
+-- Geometry inside one shelf slot. Keeping the card smaller than its slot
+-- leaves a consistent gutter, while the right-and-bottom shadow stays inside
+-- the same footprint and cannot overlap a neighboring book.
+function CoverLayout.card(options)
+    options = options or {}
+    local width = positive(options.width, 1)
+    local height = positive(options.height, 1)
+    local size_scale = positive(options.size_scale, 1)
+    local gutter = math.max(1, math.floor(6 * size_scale))
+    local shadow = math.max(1, math.floor(3 * size_scale))
+    local title_gap = math.max(1, math.floor(4 * size_scale))
+    local title_height = math.max(1, math.floor(26 * size_scale))
+    local cover_width = math.max(1, width - 2 * gutter)
+    local cover_height = math.max(1, height - 2 * gutter - title_gap - title_height)
+    return {
+        gutter = gutter,
+        shadow = shadow,
+        title_gap = title_gap,
+        title_height = title_height,
+        cover_width = cover_width,
+        cover_height = cover_height,
+        card_width = math.max(1, cover_width - shadow),
+        card_height = math.max(1, cover_height - shadow),
+        radius = math.max(1, math.floor(4 * size_scale)),
+    }
+end
+
 return CoverLayout

@@ -215,10 +215,12 @@ function PrivateReadingBadge:paintTo(bb, x, y)
     local mask_height = math.max(6, math.floor(self.size * 0.34))
     -- Place the whole hood below the diagonal rather than across it, while
     -- keeping it clear of the rounded lower-left cover corner.
-    local mask_x = math.max(0, math.floor(self.size * 0.20))
-    -- Leave three pixels of the badge below the glyph, so the cover's rounded
-    -- clipping never removes the mask's lower edge.
-    local mask_y = math.max(0, self.size - mask_height - 3)
+    -- The visual centre of a lower-left right triangle is offset left and up
+    -- from its bounding-box centre.
+    local mask_x = math.max(0, math.floor(self.size * 0.125))
+    -- Leave five pixels below the glyph, so the cover's rounded clipping never
+    -- removes the mask's lower edge.
+    local mask_y = math.max(0, self.size - mask_height - 5)
     self:_paint_mask(bb, x + mask_x, y + mask_y, mask_width, mask_height)
     -- Two short slanted eye openings stay legible at e-ink thumbnail scale.
     local eye_y = y + mask_y + math.max(1, math.floor(mask_height * 0.35))

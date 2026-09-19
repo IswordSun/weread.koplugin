@@ -217,7 +217,7 @@ function PrivateReadingBadge:paintTo(bb, x, y)
     -- keeping it clear of the rounded lower-left cover corner.
     -- The visual centre of a lower-left right triangle is offset left and up
     -- from its bounding-box centre.
-    local mask_x = math.max(0, math.floor(self.size * 0.083))
+    local mask_x = math.max(0, math.floor(self.size * 0.083) + 3)
     -- Leave five pixels below the glyph, so the cover's rounded clipping never
     -- removes the mask's lower edge.
     local mask_y = math.max(0, self.size - mask_height - 6)

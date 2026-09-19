@@ -488,7 +488,9 @@ function CoverCell:init()
     self._has_private_badge = self._private_reading
     if self._private_reading then
         local badge_size = math.max(1, math.min(metrics.card_width, metrics.card_height,
-            Screen:scaleBySize(28)))
+            -- Keep this as a quiet state marker: the official badge occupies
+            -- only a small part of the lower-left cover corner.
+            Screen:scaleBySize(20)))
         local badge = PrivateReadingBadge:new{
             size = badge_size,
             card_width = metrics.card_width,

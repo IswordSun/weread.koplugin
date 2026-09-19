@@ -158,6 +158,62 @@ function FinishedBadge:free(...)
     if self.label and self.label.free then self.label:free(...) end
 end
 
+-- WeRead marks private reading with a black corner pennant and a white mask.
+-- The badge honours the cover's rounded silhouette, so it does not square off
+-- the lower-left corner while reproducing the official visual language.
+local PrivateReadingBadge = Widget:extend{
+    size = 1,
+    card_width = 1,
+    card_height = 1,
+    card_radius = 0,
+    card_offset_x = 0,
+    card_offset_y = 0,
+}
+
+function PrivateReadingBadge:init()
+    self.size = math.max(1, math.floor(tonumber(self.size) or 1))
+    self.dimen = Geom:new{ w = self.size, h = self.size }
+end
+
+function PrivateReadingBadge:_inside_cover(px, py)
+    return inside_rounded_rect(self.card_offset_x + px, self.card_offset_y + py,
+        self.card_width, self.card_height, self.card_radius)
+end
+
+function PrivateReadingBadge:_paint_mask_ellipse(bb, x, y, center_x, center_y, radius_x, radius_y)
+    for row = -radius_y, radius_y do
+        local ratio = row / math.max(1, radius_y)
+        local half_width = math.floor(radius_x * math.sqrt(math.max(0, 1 - ratio * ratio)))
+        bb:paintRect(x + center_x - half_width, y + center_y + row,
+            2 * half_width + 1, 1, Blitbuffer.COLOR_WHITE)
+    end
+end
+
+function PrivateReadingBadge:paintTo(bb, x, y)
+    -- The lower-left right triangle, clipped against the cover's corner arc.
+    for row = 0, self.size - 1 do
+        for column = 0, row do
+            if self:_inside_cover(column, row) then
+                bb:paintRect(x + column, y + row, 1, 1, Blitbuffer.COLOR_BLACK)
+            end
+        end
+    end
+    local mask_x = math.floor(self.size * 0.30)
+    local mask_y = math.floor(self.size * 0.72)
+    local radius_x = math.max(2, math.floor(self.size * 0.22))
+    local radius_y = math.max(1, math.floor(self.size * 0.14))
+    self:_paint_mask_ellipse(bb, x, y, mask_x, mask_y, radius_x, radius_y)
+    local eye_radius = math.max(1, math.floor(radius_y / 2))
+    local eye_gap = math.max(1, math.floor(radius_x * 0.45))
+    bb:paintCircle(x + mask_x - eye_gap, y + mask_y, eye_radius, Blitbuffer.COLOR_BLACK)
+    bb:paintCircle(x + mask_x + eye_gap, y + mask_y, eye_radius, Blitbuffer.COLOR_BLACK)
+end
+
+local function is_private_book(book)
+    local secret = book and book.secret
+    return secret == true or tonumber(secret) == 1
+end
+
 local function is_finished(book)
     return tonumber(book and book.finishReading) == 1
 end
@@ -415,6 +471,23 @@ function CoverCell:init()
             badge_inset,
         }
         cover_layers[#cover_layers + 1] = badge
+    end
+    self._private_reading = is_private_book(self.book)
+    self._has_private_badge = self._private_reading
+    if self._private_reading then
+        local badge_size = math.max(1, math.min(metrics.card_width, metrics.card_height,
+            Screen:scaleBySize(22)))
+        local badge = PrivateReadingBadge:new{
+            size = badge_size,
+            card_width = metrics.card_width,
+            card_height = metrics.card_height,
+            card_radius = metrics.radius,
+            card_offset_x = 0,
+            card_offset_y = metrics.card_height - badge_size,
+        }
+        badge.overlap_offset = { 0, metrics.card_height - badge_size }
+        cover_layers[#cover_layers + 1] = badge
+        self._private_badge_size = badge_size
     end
     local cover = OverlapGroup:new(cover_layers)
     local title = self.book.title or self.book.bookId or self.book.book_id or _("Untitled")

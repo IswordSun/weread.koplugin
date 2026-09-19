@@ -287,6 +287,7 @@ expect(large_view.page_count == 100 and #large_view._item_rows == 10,
 
 books[1]._cached = true
 books[1].finishReading = "1"
+books[1].secret = "1"
 local cover_paths = { [books[1]] = "/covers/one.jpg" }
 local cover_view = LibraryView.show({
     mode = "books", books = books, accounts = {},
@@ -312,6 +313,10 @@ expect(cover_view._item_rows[1]._has_download_status == true
 expect(cover_view._item_rows[1]._has_finished_badge == true
         and cover_view._item_rows[2]._has_finished_badge == false,
     "cover bookshelf finished badge did not follow shelf completion state")
+expect(cover_view._item_rows[1]._has_private_badge == true
+        and cover_view._item_rows[1]._private_badge_size == 22
+        and cover_view._item_rows[2]._has_private_badge == false,
+    "cover bookshelf private badge did not follow the private-reading state")
 expect(cover_view._item_rows[1].width == 200
         and cover_view._item_rows[3].width == 200,
     "cover bookshelf columns did not fill the complete screen width")

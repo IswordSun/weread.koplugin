@@ -705,7 +705,7 @@ function M:onUnifiedAnnotationsReady()
     self._unified_annotations_active = self:_usesUnifiedAnnotations()
     started = perf("annotation_display_state", started)
     self:_refreshAnnotationOverlay()
-    started = perf("saved_annotation_overlay", started)
+    perf("saved_annotation_overlay", started)
     -- Opening a book only displays saved projections. Downloading or matching
     -- is always initiated from an explicit menu action.
 end

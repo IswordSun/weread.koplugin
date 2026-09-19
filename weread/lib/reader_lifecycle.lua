@@ -105,7 +105,9 @@ end
 
 function M:onReaderReady()
     self._reader_session_gen = (self._reader_session_gen or 0) + 1
-    local perf = PluginUtil.reader_open_perf
+    local perf = PluginUtil.reader_open_perf or function(_stage, started)
+        return started or 0
+    end
     local opened = perf("reader_ready_begin", nil, "session=", self._reader_session_gen)
     self:_teardownThoughtInterception()
     self:_installReaderHighlightTapGuard()

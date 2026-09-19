@@ -143,7 +143,10 @@ function ProgressSync:_local_fraction()
 end
 
 function ProgressSync:capture_local()
-    local book_id = self.current_book_id or self.detect_book()
+    -- Recheck the document binding before using a cached catalog. The reader
+    -- can replace a document at the same path before its lifecycle callback
+    -- resets `current_book_id`.
+    local book_id = self.detect_book() or self.current_book_id
     if not book_id or is_mp_book(book_id) then
         return nil, "document_not_weread"
     end

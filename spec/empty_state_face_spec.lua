@@ -286,6 +286,7 @@ expect(large_view.page_count == 100 and #large_view._item_rows == 10,
     "large bookshelf created more than one page of row widgets")
 
 books[1]._cached = true
+books[1].finishReading = "1"
 local cover_paths = { [books[1]] = "/covers/one.jpg" }
 local cover_view = LibraryView.show({
     mode = "books", books = books, accounts = {},
@@ -308,6 +309,9 @@ expect(cover_view._item_rows[1]._has_download_status == true
         and cover_view._item_rows[2]._has_download_status == false
         and cover_view._item_rows[2]._download_status_checked == false,
     "cover bookshelf download status did not follow download state")
+expect(cover_view._item_rows[1]._has_finished_badge == true
+        and cover_view._item_rows[2]._has_finished_badge == false,
+    "cover bookshelf finished badge did not follow shelf completion state")
 expect(cover_view._item_rows[1].width == 200
         and cover_view._item_rows[3].width == 200,
     "cover bookshelf columns did not fill the complete screen width")

@@ -130,6 +130,38 @@ function RoundedCoverCard:paintTo(bb, x, y)
     end
 end
 
+local FinishedBadge = Widget:extend{}
+
+function FinishedBadge:init()
+    self.label = TextWidget:new{
+        text = _("Read complete"),
+        face = Font:getFace("cfont", 11),
+    }
+    self.padding = math.max(1, Screen:scaleBySize(2))
+    local label_size = self.label:getSize()
+    self.width = math.max(Screen:scaleBySize(28), label_size.w + 2 * self.padding)
+    self.height = math.max(Screen:scaleBySize(16), label_size.h + 2 * self.padding)
+    self.dimen = Geom:new{ w = self.width, h = self.height }
+end
+
+function FinishedBadge:paintTo(bb, x, y)
+    bb:paintRect(x, y, self.width, self.height, Blitbuffer.COLOR_WHITE)
+    bb:paintBorder(x, y, self.width, self.height, Size.border.thin,
+        Blitbuffer.COLOR_BLACK, 0, true)
+    local label_size = self.label:getSize()
+    self.label:paintTo(bb,
+        x + math.floor((self.width - label_size.w) / 2),
+        y + math.floor((self.height - label_size.h) / 2))
+end
+
+function FinishedBadge:free(...)
+    if self.label and self.label.free then self.label:free(...) end
+end
+
+local function is_finished(book)
+    return tonumber(book and book.finishReading) == 1
+end
+
 local DownloadStatus = Widget:extend{
     size = 1,
 }
@@ -370,6 +402,13 @@ function CoverCell:init()
         cover_layers[#cover_layers + 1] = shadow
     end
     cover_layers[#cover_layers + 1] = cover_card
+    self._finished = is_finished(self.book)
+    self._has_finished_badge = self._finished
+    if self._finished then
+        local badge = FinishedBadge:new{}
+        badge.overlap_offset = { math.max(0, metrics.card_width - badge.width), 0 }
+        cover_layers[#cover_layers + 1] = badge
+    end
     local cover = OverlapGroup:new(cover_layers)
     local title = self.book.title or self.book.bookId or self.book.book_id or _("Untitled")
     local status_size = math.max(1, math.min(metrics.title_height, Screen:scaleBySize(10)))
@@ -667,7 +706,7 @@ function LibraryView:itemStatus(book)
     local status = ""
     if book.readUpdateTime and book.readUpdateTime > 0 then
         status = os.date("%Y-%m-%d", book.readUpdateTime)
-    elseif book.finishReading == 1 then
+    elseif is_finished(book) then
         status = _("Done")
     end
     if book._cached then

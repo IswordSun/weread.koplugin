@@ -36,7 +36,11 @@ function CoverLayout.calculate(options)
         options.reserved_height, math.ceil(225 * size_scale)
     )
     local content_height = math.max(1, height - math.min(reserved_height, height - 1))
-    local columns = math.max(1, math.floor(width / min_cell_width))
+    -- Four columns keep covers readable on large e-ink panels. Smaller
+    -- screens still fall back to fewer columns when their physical width
+    -- cannot accommodate four cards.
+    local max_columns = math.max(1, math.floor(positive(options.max_columns, 4)))
+    local columns = math.min(max_columns, math.max(1, math.floor(width / min_cell_width)))
     local rows = math.max(1, math.floor(content_height / min_cell_height))
     return {
         columns = columns,
@@ -57,21 +61,38 @@ function CoverLayout.card(options)
     local height = positive(options.height, 1)
     local size_scale = positive(options.size_scale, 1)
     local gutter = math.max(1, math.floor(6 * size_scale))
-    local shadow = math.max(1, math.floor(3 * size_scale))
+    local requested_shadow = math.max(1, math.floor(3 * size_scale))
     local title_gap = math.max(1, math.floor(4 * size_scale))
     local title_height = math.max(1, math.floor(26 * size_scale))
-    local cover_width = math.max(1, width - 2 * gutter)
-    local cover_height = math.max(1, height - 2 * gutter - title_gap - title_height)
+    local max_cover_width = math.max(1, width - 2 * gutter)
+    local max_cover_height = math.max(1, height - 2 * gutter - title_gap - title_height)
+    local shadow = math.min(requested_shadow,
+        math.max(0, math.min(max_cover_width - 1, max_cover_height - 1)))
+    local max_card_width = math.max(1, max_cover_width - shadow)
+    local max_card_height = math.max(1, max_cover_height - shadow)
+    -- Most WeRead covers are close to 2:3. Constraining the card to that
+    -- portrait proportion makes the border hug the artwork instead of framing
+    -- a wide empty box around it.
+    local aspect = positive(options.aspect, 0.68)
+    local card_width, card_height
+    if max_card_width / max_card_height > aspect then
+        card_height = max_card_height
+        card_width = math.max(1, math.floor(card_height * aspect))
+    else
+        card_width = max_card_width
+        card_height = math.max(1, math.floor(card_width / aspect))
+    end
     return {
         gutter = gutter,
         shadow = shadow,
         title_gap = title_gap,
         title_height = title_height,
-        cover_width = cover_width,
-        cover_height = cover_height,
-        card_width = math.max(1, cover_width - shadow),
-        card_height = math.max(1, cover_height - shadow),
-        radius = math.max(1, math.floor(4 * size_scale)),
+        cover_width = card_width + shadow,
+        cover_height = card_height + shadow,
+        card_width = card_width,
+        card_height = card_height,
+        radius = math.min(math.max(1, math.floor(4 * size_scale)),
+            math.max(1, math.floor(math.min(card_width, card_height) / 2))),
     }
 end
 

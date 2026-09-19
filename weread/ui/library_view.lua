@@ -33,24 +33,6 @@ local icons_dir = debug.getinfo(1, "S").source:match("^@(.*/)") .. "../../icons/
 
 local function _(text) return I18n.tr(text) end
 
-local CachedCorner = Widget:extend{
-    size = 0,
-}
-
-function CachedCorner:init()
-    self.size = math.max(1, math.floor(tonumber(self.size) or 1))
-    self.dimen = Geom:new{ w = self.size, h = self.size }
-end
-
-function CachedCorner:paintTo(bb, x, y)
-    -- A compact, solid dog-ear in the upper-right corner. Drawing it one
-    -- scanline at a time keeps the marker dependency-free and crisp on e-ink.
-    for row = 0, self.size - 1 do
-        local width = self.size - row
-        bb:paintRect(x + row, y + row, width, 1, Blitbuffer.COLOR_BLACK)
-    end
-end
-
 local CoverShadow = Widget:extend{
     width = 1,
     height = 1,
@@ -66,6 +48,44 @@ end
 
 function CoverShadow:paintTo(bb, x, y)
     bb:paintRoundedRect(x, y, self.width, self.height, Blitbuffer.gray(0.5), self.radius)
+end
+
+local DownloadStatus = Widget:extend{
+    downloaded = false,
+    size = 1,
+}
+
+function DownloadStatus:init()
+    self.size = math.max(1, math.floor(tonumber(self.size) or 1))
+    self.dimen = Geom:new{ w = self.size, h = self.size }
+end
+
+local function paint_status_line(bb, x1, y1, x2, y2, stroke)
+    local steps = math.max(math.abs(x2 - x1), math.abs(y2 - y1), 1)
+    for step = 0, steps do
+        local ratio = step / steps
+        bb:paintRect(
+            math.floor(x1 + (x2 - x1) * ratio),
+            math.floor(y1 + (y2 - y1) * ratio),
+            stroke, stroke, Blitbuffer.COLOR_BLACK
+        )
+    end
+end
+
+function DownloadStatus:paintTo(bb, x, y)
+    local stroke = math.max(1, math.floor(self.size / 8))
+    local radius = math.max(1, math.floor((self.size - stroke) / 2))
+    local center_x = x + math.floor(self.size / 2)
+    local center_y = y + math.floor(self.size / 2)
+    bb:paintCircle(center_x, center_y, radius, Blitbuffer.COLOR_BLACK, stroke)
+    if self.downloaded then
+        paint_status_line(bb,
+            center_x - math.floor(radius * 0.52), center_y,
+            center_x - math.floor(radius * 0.12), center_y + math.floor(radius * 0.42), stroke)
+        paint_status_line(bb,
+            center_x - math.floor(radius * 0.12), center_y + math.floor(radius * 0.42),
+            center_x + math.floor(radius * 0.58), center_y - math.floor(radius * 0.42), stroke)
+    end
 end
 
 local ShelfRow = InputContainer:extend{
@@ -189,12 +209,6 @@ function CoverCell:init()
         }
         self._has_cover = false
     end
-    local shadow = CoverShadow:new{
-        width = metrics.card_width,
-        height = metrics.card_height,
-        radius = metrics.radius,
-    }
-    shadow.overlap_offset = { metrics.shadow, metrics.shadow }
     local cover_card = FrameContainer:new{
         width = metrics.card_width,
         height = metrics.card_height,
@@ -210,27 +224,32 @@ function CoverCell:init()
     }
     local cover_layers = {
         dimen = Geom:new{ w = metrics.cover_width, h = metrics.cover_height },
-        shadow,
-        cover_card,
     }
-    self._has_cached_corner = self.cached == true
-    if self._has_cached_corner then
-        local corner_size = math.max(1, math.min(
-            metrics.card_width,
-            metrics.card_height,
-            Screen:scaleBySize(16)
-        ))
-        local corner = CachedCorner:new{ size = corner_size }
-        corner.overlap_offset = { metrics.card_width - corner_size, 0 }
-        cover_layers[#cover_layers + 1] = corner
-        self._cached_corner_size = corner_size
+    if metrics.shadow > 0 then
+        local shadow = CoverShadow:new{
+            width = metrics.card_width,
+            height = metrics.card_height,
+            radius = metrics.radius,
+        }
+        shadow.overlap_offset = { metrics.shadow, metrics.shadow }
+        cover_layers[#cover_layers + 1] = shadow
     end
+    cover_layers[#cover_layers + 1] = cover_card
     local cover = OverlapGroup:new(cover_layers)
     local title = self.book.title or self.book.bookId or self.book.book_id or _("Untitled")
+    local status_size = math.max(1, math.min(metrics.title_height, Screen:scaleBySize(18)))
+    local title_gap = math.max(1, Screen:scaleBySize(4))
     local title_widget = TextWidget:new{
         text = title,
         face = Font:getFace("cfont", 17),
-        max_width = metrics.cover_width,
+        max_width = math.max(1, metrics.cover_width - status_size - title_gap),
+    }
+    self._has_download_status = true
+    self._download_status_checked = self.cached == true
+    local title_line = HorizontalGroup:new{
+        DownloadStatus:new{ size = status_size, downloaded = self._download_status_checked },
+        HorizontalSpan:new{ width = title_gap },
+        title_widget,
     }
     self.frame = FrameContainer:new{
         bordersize = 0,
@@ -250,7 +269,7 @@ function CoverCell:init()
                 VerticalSpan:new{ width = metrics.title_gap },
                 CenterContainer:new{
                     dimen = Geom:new{ w = metrics.cover_width, h = metrics.title_height },
-                    title_widget,
+                    title_line,
                 },
             },
         },

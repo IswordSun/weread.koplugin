@@ -303,10 +303,11 @@ expect(cover_view._item_rows[1]._has_cover == true
     "cover bookshelf did not distinguish cached covers from placeholders")
 expect(cover_view._item_rows[1].status == nil,
     "cover bookshelf retained date or cache status metadata")
-expect(cover_view._item_rows[1]._has_cached_corner == true
-        and cover_view._item_rows[1]._cached_corner_size == 16
-        and cover_view._item_rows[2]._has_cached_corner == false,
-    "cover bookshelf cached corner did not follow download state")
+expect(cover_view._item_rows[1]._has_download_status == true
+        and cover_view._item_rows[1]._download_status_checked == true
+        and cover_view._item_rows[2]._has_download_status == true
+        and cover_view._item_rows[2]._download_status_checked == false,
+    "cover bookshelf download status did not follow download state")
 expect(cover_view._item_rows[1].width == 200
         and cover_view._item_rows[3].width == 200,
     "cover bookshelf columns did not fill the complete screen width")

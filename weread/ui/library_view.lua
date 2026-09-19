@@ -137,10 +137,13 @@ function FinishedBadge:init()
         text = _("Read complete"),
         face = Font:getFace("cfont", 9),
     }
-    self.padding = math.max(1, Screen:scaleBySize(1))
+    -- Chinese glyphs occupy their line box unevenly. Use separate horizontal
+    -- and vertical padding so the visible whitespace around “读完” is balanced.
+    self.padding_x = math.max(1, Screen:scaleBySize(2))
+    self.padding_y = 1
     local label_size = self.label:getSize()
-    self.width = math.max(Screen:scaleBySize(20), label_size.w + 2 * self.padding)
-    self.height = math.max(Screen:scaleBySize(13), label_size.h + 2 * self.padding)
+    self.width = math.max(Screen:scaleBySize(20), label_size.w + 2 * self.padding_x)
+    self.height = label_size.h + 2 * self.padding_y
     self.dimen = Geom:new{ w = self.width, h = self.height }
 end
 

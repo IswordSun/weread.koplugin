@@ -688,7 +688,7 @@ function M:onUnifiedAnnotationsReady()
                 legacy = true
             end
         end
-        if legacy then
+        if legacy and type(self.showTransientInfo) == "function" then
             self:showTransientInfo(
                 _("Thought data format has been upgraded. Match again to download current data."), 3)
         end

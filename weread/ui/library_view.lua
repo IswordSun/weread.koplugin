@@ -207,9 +207,11 @@ function PrivateReadingBadge:paintTo(bb, x, y)
     -- The corner pennant and its glyph intentionally use separate scales:
     -- shrinking the full pennant previously left too little room for a
     -- recognisable mask.
-    local mask_width = math.max(6, math.floor(self.size * 0.38))
+    local mask_width = math.max(7, math.floor(self.size * 0.40))
     local mask_height = math.max(5, math.floor(self.size * 0.30))
-    local mask_x = math.max(0, math.floor(self.size * 0.15))
+    -- Place the whole hood below the diagonal rather than across it, while
+    -- keeping it clear of the rounded lower-left cover corner.
+    local mask_x = math.max(0, math.floor(self.size * 0.25))
     local mask_y = math.max(0, self.size - mask_height - 2)
     self:_paint_mask(bb, x + mask_x, y + mask_y, mask_width, mask_height)
     -- Two short slanted eye openings stay legible at e-ink thumbnail scale.
@@ -491,8 +493,8 @@ function CoverCell:init()
     self._has_private_badge = self._private_reading
     if self._private_reading then
         local badge_size = math.max(1, math.min(metrics.card_width, metrics.card_height,
-            -- Keep a compact but complete corner base for the smaller glyph.
-            Screen:scaleBySize(20)))
+            -- Give the compact glyph enough black corner base to remain whole.
+            Screen:scaleBySize(24)))
         local badge = PrivateReadingBadge:new{
             size = badge_size,
             card_width = metrics.card_width,

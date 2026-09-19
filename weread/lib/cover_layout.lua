@@ -92,8 +92,11 @@ function CoverLayout.card(options)
         cover_height = card_height + shadow,
         card_width = card_width,
         card_height = card_height,
-        radius = math.min(math.max(1, math.floor(4 * size_scale)),
-            math.max(1, math.floor(math.min(card_width, card_height) / 2))),
+        -- A one-pixel e-ink border needs to meet cleanly at each corner.
+        -- Rounded arcs intentionally omit corner pixels, which reads as a
+        -- broken frame at normal shelf scale. The offset shadow supplies the
+        -- depth, so keep the artwork frame precise and square.
+        radius = 0,
     }
 end
 

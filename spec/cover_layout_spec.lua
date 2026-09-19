@@ -80,6 +80,8 @@ expect(card.cover_width == 179 and card.cover_height == 262,
     "cover card should use a portrait cover box")
 expect(card.card_width == 176 and card.card_height == 259,
     "cover shadow should remain inside its shelf slot")
+expect(card.radius == 0,
+    "cover frame should have continuous square corners")
 
 local tiny_card = CoverLayout.card{ width = 1, height = 1, size_scale = 100 }
 expect(tiny_card.cover_width == 1 and tiny_card.cover_height == 1

@@ -135,12 +135,12 @@ local FinishedBadge = Widget:extend{}
 function FinishedBadge:init()
     self.label = TextWidget:new{
         text = _("Read complete"),
-        face = Font:getFace("cfont", 11),
+        face = Font:getFace("cfont", 9),
     }
-    self.padding = math.max(1, Screen:scaleBySize(2))
+    self.padding = math.max(1, Screen:scaleBySize(1))
     local label_size = self.label:getSize()
-    self.width = math.max(Screen:scaleBySize(28), label_size.w + 2 * self.padding)
-    self.height = math.max(Screen:scaleBySize(16), label_size.h + 2 * self.padding)
+    self.width = math.max(Screen:scaleBySize(20), label_size.w + 2 * self.padding)
+    self.height = math.max(Screen:scaleBySize(13), label_size.h + 2 * self.padding)
     self.dimen = Geom:new{ w = self.width, h = self.height }
 end
 
@@ -490,7 +490,7 @@ function CoverCell:init()
         -- Keep the completion stamp inside the rounded cover silhouette. If it
         -- touches the outer top-right corner, its square white background
         -- hides the cover radius and makes the card read as a right angle.
-        local badge_inset = math.max(border, metrics.radius)
+        local badge_inset = math.max(border, math.floor(metrics.radius * 0.55))
         badge.overlap_offset = {
             math.max(0, metrics.card_width - badge.width - badge_inset),
             badge_inset,

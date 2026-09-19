@@ -54,6 +54,30 @@ local DownloadStatus = Widget:extend{
     size = 1,
 }
 
+-- Keep this small container local: it gives shelf titles a fixed measured
+-- width and an explicit left paint origin without adding a KOReader widget
+-- dependency that is absent from the lightweight Lua test harness.
+local LeftAlignedTitle = Widget:extend{
+    width = 1,
+    height = 1,
+    content = nil,
+}
+
+function LeftAlignedTitle:init()
+    self.width = math.max(1, math.floor(tonumber(self.width) or 1))
+    self.height = math.max(1, math.floor(tonumber(self.height) or 1))
+    self.dimen = Geom:new{ w = self.width, h = self.height }
+end
+
+function LeftAlignedTitle:paintTo(bb, x, y)
+    local content_size = self.content:getSize()
+    self.content:paintTo(bb, x, y + math.floor((self.height - content_size.h) / 2))
+end
+
+function LeftAlignedTitle:free(...)
+    if self.content and self.content.free then self.content:free(...) end
+end
+
 function DownloadStatus:init()
     self.size = math.max(1, math.floor(tonumber(self.size) or 1))
     self.dimen = Geom:new{ w = self.size, h = self.size }
@@ -257,17 +281,12 @@ function CoverCell:init()
         title_line[#title_line + 1] = HorizontalSpan:new{ width = title_gap }
     end
     title_line[#title_line + 1] = title_widget
-    -- The enclosing fixed-width frame prevents CenterContainer from centering
-    -- a short title line: every book title starts at the cover's left edge.
-    local title_frame = FrameContainer:new{
+    -- The fixed-width custom container participates in measurement and paints
+    -- all titles from the cover's left edge, even when the title is short.
+    local title_container = LeftAlignedTitle:new{
         width = metrics.cover_width,
         height = metrics.title_height,
-        bordersize = 0,
-        radius = 0,
-        margin = 0,
-        padding = 0,
-        background = Blitbuffer.COLOR_WHITE,
-        title_line,
+        content = title_line,
     }
     self.frame = FrameContainer:new{
         bordersize = 0,
@@ -287,7 +306,7 @@ function CoverCell:init()
                 VerticalSpan:new{ width = metrics.title_gap },
                 CenterContainer:new{
                     dimen = Geom:new{ w = metrics.cover_width, h = metrics.title_height },
-                    title_frame,
+                    title_container,
                 },
             },
         },

@@ -80,8 +80,8 @@ expect(card.cover_width == 179 and card.cover_height == 262,
     "cover card should use a portrait cover box")
 expect(card.card_width == 176 and card.card_height == 259,
     "cover shadow should remain inside its shelf slot")
-expect(card.radius == 0,
-    "cover frame should have continuous square corners")
+expect(card.radius == 5,
+    "cover frame should use a stable e-ink-friendly corner radius")
 
 local portrait_crop = CoverLayout.centerCrop(300, 600, 180, 260)
 expect(portrait_crop.width == 180 and portrait_crop.height == 360

@@ -50,6 +50,86 @@ function CoverShadow:paintTo(bb, x, y)
     bb:paintRoundedRect(x, y, self.width, self.height, Blitbuffer.gray(0.5), self.radius)
 end
 
+local function inside_rounded_rect(px, py, width, height, radius)
+    if px < 0 or py < 0 or px >= width or py >= height then return false end
+    if radius <= 0 then return true end
+    local center_x, center_y
+    if px < radius and py < radius then
+        center_x, center_y = radius, radius
+    elseif px >= width - radius and py < radius then
+        center_x, center_y = width - radius - 1, radius
+    elseif px < radius and py >= height - radius then
+        center_x, center_y = radius, height - radius - 1
+    elseif px >= width - radius and py >= height - radius then
+        center_x, center_y = width - radius - 1, height - radius - 1
+    else
+        return true
+    end
+    local delta_x, delta_y = px - center_x, py - center_y
+    return delta_x * delta_x + delta_y * delta_y <= radius * radius
+end
+
+-- FrameContainer does not clip its child to its radius. This card masks the
+-- four image corners before painting one anti-aliased border, so the cover,
+-- border, and drop shadow all share the same smooth geometry.
+local RoundedCoverCard = Widget:extend{
+    inner = nil,
+    width = 1,
+    height = 1,
+    radius = 0,
+    border_size = 0,
+    shadow_offset = 0,
+    shadow_color = nil,
+}
+
+function RoundedCoverCard:init()
+    self.width = math.max(1, math.floor(tonumber(self.width) or 1))
+    self.height = math.max(1, math.floor(tonumber(self.height) or 1))
+    self.radius = math.max(0, math.floor(tonumber(self.radius) or 0))
+    self.border_size = math.max(0, math.floor(tonumber(self.border_size) or 0))
+    self.dimen = Geom:new{ w = self.width, h = self.height }
+end
+
+function RoundedCoverCard:free(...)
+    if self.inner and self.inner.free then self.inner:free(...) end
+end
+
+function RoundedCoverCard:_masked_corner_color(px, py)
+    if self.shadow_color
+        and inside_rounded_rect(px - self.shadow_offset, py - self.shadow_offset,
+            self.width, self.height, self.radius) then
+        return self.shadow_color
+    end
+    return Blitbuffer.COLOR_WHITE
+end
+
+function RoundedCoverCard:paintTo(bb, x, y)
+    if self.inner then self.inner:paintTo(bb, x + self.border_size, y + self.border_size) end
+    local radius = self.radius
+    if radius > 0 then
+        for dy = 0, radius - 1 do
+            for dx = 0, radius - 1 do
+                local corners = {
+                    { dx, dy },
+                    { self.width - 1 - dx, dy },
+                    { dx, self.height - 1 - dy },
+                    { self.width - 1 - dx, self.height - 1 - dy },
+                }
+                for _, point in ipairs(corners) do
+                    if not inside_rounded_rect(point[1], point[2], self.width, self.height, radius) then
+                        bb:paintRect(x + point[1], y + point[2], 1, 1,
+                            self:_masked_corner_color(point[1], point[2]))
+                    end
+                end
+            end
+        end
+    end
+    if self.border_size > 0 then
+        bb:paintBorder(x, y, self.width, self.height, self.border_size,
+            Blitbuffer.COLOR_BLACK, radius, true)
+    end
+end
+
 local DownloadStatus = Widget:extend{
     size = 1,
 }
@@ -267,18 +347,15 @@ function CoverCell:init()
         }
         self._has_cover = false
     end
-    local cover_card = FrameContainer:new{
+    local cover_card = RoundedCoverCard:new{
+        inner = cover_content,
         width = metrics.card_width,
         height = metrics.card_height,
-        margin = 0,
-        padding = 0,
-        bordersize = border,
+        border_size = border,
         radius = metrics.radius,
-        background = Blitbuffer.COLOR_WHITE,
-        CenterContainer:new{
-            dimen = Geom:new{ w = image_width, h = image_height },
-            cover_content,
-        },
+        shadow_offset = metrics.shadow,
+        shadow_color = metrics.shadow > 0
+            and (Blitbuffer.gray and Blitbuffer.gray(0.5) or Blitbuffer.COLOR_GRAY) or nil,
     }
     local cover_layers = {
         dimen = Geom:new{ w = metrics.cover_width, h = metrics.cover_height },

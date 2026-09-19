@@ -92,11 +92,10 @@ function CoverLayout.card(options)
         cover_height = card_height + shadow,
         card_width = card_width,
         card_height = card_height,
-        -- A one-pixel e-ink border needs to meet cleanly at each corner.
-        -- Rounded arcs intentionally omit corner pixels, which reads as a
-        -- broken frame at normal shelf scale. The offset shadow supplies the
-        -- depth, so keep the artwork frame precise and square.
-        radius = 0,
+        -- A small shared radius is large enough to read as a smooth cover on
+        -- e-ink, but small enough to retain the bookshelf's compact feel.
+        radius = math.min(math.max(2, math.floor(5 * size_scale)),
+            math.floor(math.min(card_width, card_height) / 2)),
     }
 end
 

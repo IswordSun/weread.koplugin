@@ -190,6 +190,16 @@ end
 host:chooseAnnotationChapters()
 assert(picker_options.model.current.chapter.chapterUid == "110",
     "chapter picker did not locate the current local chapter")
+-- A normal sync handles only the chapter at the current reading position;
+-- explicit selections from the chapter picker remain untouched.
+local synced_chapters
+host.startUnifiedAnnotationSync = Controller.startUnifiedAnnotationSync
+local original_run_annotation_job = host._runAnnotationJob
+host._runAnnotationJob = function(_self, _context, options) synced_chapters = options.chapters end
+host:startUnifiedAnnotationSync({ offline = true })
+assert(#synced_chapters == 1 and synced_chapters[1].chapterUid == "110",
+    "default annotation sync did not limit work to the current chapter")
+host._runAnnotationJob = original_run_annotation_job
 -- Matching one selected chapter must activate its projection immediately;
 -- waiting for every mapped chapter leaves valid underlines invisible.
 context.chapters = { { chapterUid = "1" }, { chapterUid = "2" } }

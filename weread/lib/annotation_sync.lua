@@ -129,8 +129,12 @@ function Sync:run()
             and source_status.persistence_version ~= Sync.PERSISTENCE_VERSION then
             -- Do not decode a legacy chapter snapshot just to convert it: it
             -- may contain the oversized review payload this format replaces.
-            -- Keep it available while offline, then atomically restart this
-            -- chapter from the small resumable representation once online.
+            -- Automatic paths leave it untouched; an explicit user sync
+            -- performs the bounded rebuild below.
+            if not self.reset_legacy then
+                self:yield("legacy")
+                goto next_chapter
+            end
             self:requireNetwork()
             store:write(book_id, {
                 { kind = "source", key = uid }, { kind = "source_status", key = uid },
@@ -225,12 +229,15 @@ function Sync:run()
             local by_range = underlines_by_range(stage.underlines)
             local persist_batch = stage.next_persist_batch or 1
             local persist_review = stage.next_persist_review or 1
+            local persist_rows
             while persist_batch <= #batches do
-                local rows = store:get(book_id, "batch", uid .. ":" .. persist_batch)
-                assert(rows, "Missing saved thoughts batch")
+                if not persist_rows then
+                    persist_rows = store:get(book_id, "batch", uid .. ":" .. persist_batch)
+                    assert(persist_rows, "Missing saved thoughts batch")
+                end
                 local changes, range_count, thought_count, byte_count = {}, 0, 0, 0
-                while persist_review <= #rows do
-                    local review = rows[persist_review]
+                while persist_review <= #persist_rows do
+                    local review = persist_rows[persist_review]
                     local items = Annotations.buildThoughtPopupItems(review)
                     local item_bytes = popup_items_bytes(items)
                     local would_exceed = range_count > 0 and (range_count >= MAX_PERSIST_RANGES
@@ -254,9 +261,10 @@ function Sync:run()
                     byte_count = byte_count + item_bytes
                     persist_review = persist_review + 1
                 end
-                if persist_review > #rows then
+                if persist_review > #persist_rows then
                     changes[#changes + 1] = { kind = "batch", key = uid .. ":" .. persist_batch }
                     persist_batch, persist_review = persist_batch + 1, 1
+                    persist_rows = nil
                 end
                 stage.next_persist_batch = persist_batch
                 stage.next_persist_review = persist_review
@@ -266,7 +274,7 @@ function Sync:run()
                 for batch_index = 1, persist_batch - 1 do
                     persisted = persisted + #(batches[batch_index] or {})
                 end
-                self:yield("thoughts", nil, {
+                self:yield("persist", nil, {
                     current = math.min(persisted, #ranges), count = #ranges,
                 })
             end

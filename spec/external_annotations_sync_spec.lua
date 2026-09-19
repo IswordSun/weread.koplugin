@@ -295,6 +295,12 @@ local bulk_client = {
     end,
 }
 local bulk_store = helper.new()
+local bulk_batch_reads = 0
+local bulk_get = bulk_store.get
+bulk_store.get = function(self, book_id, kind, key)
+    if kind == "batch" and key == "bulk:1" then bulk_batch_reads = bulk_batch_reads + 1 end
+    return bulk_get(self, book_id, kind, key)
+end
 local function bulk_job()
     return Sync:new({ store = bulk_store, client = bulk_client, book_id = "bulk",
         chapters = { { chapterUid = "bulk" } } })
@@ -308,20 +314,25 @@ end
 local bulk_stage = bulk_store:get("bulk", "download", "bulk")
 assert(bulk_stage and bulk_stage.next_persist_batch == 1 and bulk_stage.next_persist_review == 101,
     "large thought batch was not checkpointed after 100 ranges")
+assert(bulk_batch_reads == 1,
+    "a segmented batch was decoded more than once in one coroutine run")
 assert(bulk_store:get("bulk", "batch", "bulk:1") and bulk_store:get("bulk", "thought", "bulk:100-100"),
     "checkpoint lost staged reviews or normalized thoughts")
 bulk.cancelled = true
+bulk_batch_reads = 0
 assert(finish(bulk_job()) and bulk_calls == 2,
     "resume repeated a saved large annotation batch")
+assert(bulk_batch_reads == 1,
+    "resumed persistence decoded its remaining batch more than once")
 local bulk_source = bulk_store:get("bulk", "source", "bulk")
 assert(bulk_source and #(bulk_source.reviews or {}) == 0
     and bulk_store:get("bulk", "thought", "bulk:101-101")
     and not bulk_store:get("bulk", "batch", "bulk:1"),
     "large annotation source retained raw reviews after persistence")
 
--- A completed cache from before per-range persistence must be re-downloaded
--- without decoding its potentially oversized source payload. Offline attempts
--- preserve that cache until a network-backed migration can begin.
+-- A completed cache from before per-range persistence is preserved during
+-- ordinary/automatic runs. Only an explicit user sync replaces it without
+-- decoding the potentially oversized source payload.
 local legacy_store = helper.new()
 legacy_store:put("book", "source", "legacy", {
     book_id = "book", chapter_uid = "legacy", underlines = { { range = "1-2" } },
@@ -331,12 +342,12 @@ legacy_store:put("book", "source_status", "legacy", { revision = "old", total = 
 local legacy_job = Sync:new({ store = legacy_store, client = client, book_id = "book",
     chapters = { { chapterUid = "legacy" } }, offline = true })
 done, reason = finish(legacy_job)
-assert(done == nil and reason == Sync.NETWORK_REQUIRED
+assert(done and reason == nil
     and legacy_store:get("book", "source", "legacy").reviews[1],
-    "offline migration erased the legacy source")
+    "automatic legacy handling erased the old source")
 count = #calls
 assert(finish(Sync:new({ store = legacy_store, client = client, book_id = "book",
-    chapters = { { chapterUid = "legacy" } } })))
+    chapters = { { chapterUid = "legacy" } }, reset_legacy = true })))
 local migrated_status = legacy_store:get("book", "source_status", "legacy")
 assert(calls[count + 1] == "ulegacy" and migrated_status.persistence_version
         == Sync.PERSISTENCE_VERSION

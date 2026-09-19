@@ -128,8 +128,8 @@ assert(json.encode(store:get("book", "source", "1")) == source_before
     and json.encode(store:list("book", "thought")) == thoughts_before,
     "cached matching changed shared source or popup data")
 
--- Legacy completed downloads have a source snapshot but no per-range popup
--- rows. They must still materialize thoughts when first projected offline.
+-- Legacy completed downloads may contain a large inline thought payload. An
+-- ordinary open must preserve it rather than decode, clear, or replace it.
 helper.legacy_checkpoints["/legacy.epub"] = {
     book_id = "book", started_at = 123, chapters = {
         { chapter_uid = "7", complete = true, underlines = { { range = "1-2", markText = "alpha" } },
@@ -141,9 +141,9 @@ helper.legacy_checkpoints["/legacy.epub"] = {
 store:importLegacy("book", "/legacy.epub", "legacy-document")
 assert(not store:get("book", "thought", "7:1-2"))
 assert(finish(new("legacy-document", { { chapterUid = "7" } }, { offline = true })))
-assert(store:get("book", "thought", "7:1-2")[1].content == "legacy thought"
-    and store:get("book", "projection", "legacy-document:7").stats.located == 1 and #calls == count,
-    "optimization skipped legacy thought migration")
+assert(not store:get("book", "thought", "7:1-2")
+    and store:get("book", "source", "7").reviews[1] and #calls == count,
+    "ordinary legacy handling decoded or replaced the old thought payload")
 
 -- Matcher upgrades must invalidate only the document projection. Downloaded
 -- chapter data remains reusable and is projected again without network work.
@@ -194,7 +194,7 @@ assert(not store:get("book", "source", "4"))
 
 -- A transient link-state false negative during the scheduled delay must not
 -- interrupt a request that can still reach the WeRead endpoint.
-local interrupted = new("disconnect", { { chapterUid = "7" } }, {
+local interrupted = new("disconnect", { { chapterUid = "8" } }, {
     is_online = function() return false end,
 })
 local running, state = interrupted:step()

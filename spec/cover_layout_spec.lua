@@ -83,6 +83,16 @@ expect(card.card_width == 176 and card.card_height == 259,
 expect(card.radius == 0,
     "cover frame should have continuous square corners")
 
+local portrait_crop = CoverLayout.centerCrop(300, 600, 180, 260)
+expect(portrait_crop.width == 180 and portrait_crop.height == 360
+        and portrait_crop.offset_x == 0 and portrait_crop.offset_y == 50,
+    "portrait cover should crop equally from top and bottom")
+
+local landscape_crop = CoverLayout.centerCrop(600, 300, 180, 260)
+expect(landscape_crop.width == 520 and landscape_crop.height == 260
+        and landscape_crop.offset_x == 170 and landscape_crop.offset_y == 0,
+    "landscape cover should crop equally from both sides")
+
 local tiny_card = CoverLayout.card{ width = 1, height = 1, size_scale = 100 }
 expect(tiny_card.cover_width == 1 and tiny_card.cover_height == 1
         and tiny_card.card_width == 1 and tiny_card.card_height == 1,

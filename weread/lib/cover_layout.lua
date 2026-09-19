@@ -100,4 +100,23 @@ function CoverLayout.card(options)
     }
 end
 
+-- Scale a source cover until it fully covers a target card, then describe the
+-- centered crop. This preserves every source aspect ratio while guaranteeing
+-- that no letterbox pixels remain inside the frame.
+function CoverLayout.centerCrop(source_width, source_height, target_width, target_height)
+    source_width = positive(source_width, 1)
+    source_height = positive(source_height, 1)
+    target_width = positive(target_width, 1)
+    target_height = positive(target_height, 1)
+    local factor = math.max(target_width / source_width, target_height / source_height)
+    local scaled_width = math.max(target_width, math.ceil(source_width * factor))
+    local scaled_height = math.max(target_height, math.ceil(source_height * factor))
+    return {
+        width = scaled_width,
+        height = scaled_height,
+        offset_x = math.floor((scaled_width - target_width) / 2),
+        offset_y = math.floor((scaled_height - target_height) / 2),
+    }
+end
+
 return CoverLayout

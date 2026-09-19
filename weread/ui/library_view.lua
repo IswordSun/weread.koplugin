@@ -78,6 +78,32 @@ function LeftAlignedTitle:free(...)
     if self.content and self.content.free then self.content:free(...) end
 end
 
+local function build_center_cropped_cover(path, width, height)
+    -- Keep image preparation independent from ImageWidget's "fit" and
+    -- "stretch" modes: neither offers a cover-fill mode for raster files.
+    -- Rendering once, scaling proportionally, and cropping the excess gives
+    -- every thumbnail a uniform frame without distorting its artwork.
+    local ok, cropped = pcall(function()
+        local RenderImage = require("ui/renderimage")
+        local source = RenderImage:renderImageFile(path, false)
+        if not source then return nil end
+        local source_width, source_height = source:getWidth(), source:getHeight()
+        if source_width < 1 or source_height < 1 then
+            source:free()
+            return nil
+        end
+        local crop = CoverLayout.centerCrop(source_width, source_height, width, height)
+        local filled = source:scale(crop.width, crop.height)
+        if filled ~= source then source:free() end
+        local output = Blitbuffer.new(width, height, filled:getType())
+        output:blitFrom(filled, 0, 0, crop.offset_x, crop.offset_y, width, height)
+        filled:free()
+        return output
+    end)
+    if ok then return cropped end
+    return nil
+end
+
 function DownloadStatus:init()
     self.size = math.max(1, math.floor(tonumber(self.size) or 1))
     self.dimen = Geom:new{ w = self.size, h = self.size }
@@ -206,20 +232,24 @@ function CoverCell:init()
     if self.cover_path then
         local image
         local ok = pcall(function()
-            image = ImageWidget:new{
-                file = self.cover_path,
-                width = image_width,
-                height = image_height,
-                -- The card itself is sized to a standard portrait cover ratio,
-                -- so stretching makes the artwork meet the single border with
-                -- no letterboxing while keeping distortion imperceptible for
-                -- normal book-cover thumbnails.
-                scale_factor = nil,
-                -- Shelf thumbnails are short-lived page content. Keeping them
-                -- out of KOReader's 8 MiB global image cache also makes corrupt
-                -- or unexpectedly large legacy files unable to crash the UI.
-                file_do_cache = false,
-            }
+            local cropped = build_center_cropped_cover(self.cover_path, image_width, image_height)
+            if cropped then
+                image = ImageWidget:new{
+                    image = cropped,
+                    image_disposable = true,
+                    scale_factor = 1,
+                }
+            else
+                -- Preserve the pre-existing safe fallback when a malformed
+                -- legacy cover cannot be decoded for cropping.
+                image = ImageWidget:new{
+                    file = self.cover_path,
+                    width = image_width,
+                    height = image_height,
+                    scale_factor = nil,
+                    file_do_cache = false,
+                }
+            end
             image:getSize()
         end)
         if ok and image then

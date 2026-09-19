@@ -51,7 +51,6 @@ function CoverShadow:paintTo(bb, x, y)
 end
 
 local DownloadStatus = Widget:extend{
-    downloaded = false,
     size = 1,
 }
 
@@ -60,32 +59,33 @@ function DownloadStatus:init()
     self.dimen = Geom:new{ w = self.size, h = self.size }
 end
 
-local function paint_status_line(bb, x1, y1, x2, y2, stroke)
+local function paint_status_line(bb, x1, y1, x2, y2, stroke, color)
     local steps = math.max(math.abs(x2 - x1), math.abs(y2 - y1), 1)
     for step = 0, steps do
         local ratio = step / steps
         bb:paintRect(
             math.floor(x1 + (x2 - x1) * ratio),
             math.floor(y1 + (y2 - y1) * ratio),
-            stroke, stroke, Blitbuffer.COLOR_BLACK
+            stroke, stroke, color
         )
     end
 end
 
 function DownloadStatus:paintTo(bb, x, y)
     local stroke = math.max(1, math.floor(self.size / 8))
-    local radius = math.max(1, math.floor((self.size - stroke) / 2))
-    local center_x = x + math.floor(self.size / 2)
-    local center_y = y + math.floor(self.size / 2)
-    bb:paintCircle(center_x, center_y, radius, Blitbuffer.COLOR_BLACK, stroke)
-    if self.downloaded then
-        paint_status_line(bb,
-            center_x - math.floor(radius * 0.52), center_y,
-            center_x - math.floor(radius * 0.12), center_y + math.floor(radius * 0.42), stroke)
-        paint_status_line(bb,
-            center_x - math.floor(radius * 0.12), center_y + math.floor(radius * 0.42),
-            center_x + math.floor(radius * 0.58), center_y - math.floor(radius * 0.42), stroke)
-    end
+    local radius = math.max(1, math.floor((self.size - 1) / 2))
+    local center_x = x + math.floor((self.size - 1) / 2)
+    local center_y = y + math.floor((self.size - 1) / 2)
+    -- paintCircle fills when its stroke width matches its radius.
+    bb:paintCircle(center_x, center_y, radius, Blitbuffer.COLOR_BLACK)
+    paint_status_line(bb,
+        center_x - math.floor(radius * 0.52), center_y,
+        center_x - math.floor(radius * 0.12), center_y + math.floor(radius * 0.42),
+        stroke, Blitbuffer.COLOR_WHITE)
+    paint_status_line(bb,
+        center_x - math.floor(radius * 0.12), center_y + math.floor(radius * 0.42),
+        center_x + math.floor(radius * 0.58), center_y - math.floor(radius * 0.42),
+        stroke, Blitbuffer.COLOR_WHITE)
 end
 
 local ShelfRow = InputContainer:extend{
@@ -243,17 +243,31 @@ function CoverCell:init()
     local title = self.book.title or self.book.bookId or self.book.book_id or _("Untitled")
     local status_size = math.max(1, math.min(metrics.title_height, Screen:scaleBySize(10)))
     local title_gap = math.max(1, Screen:scaleBySize(2))
+    self._has_download_status = self.cached == true
+    self._download_status_checked = self._has_download_status
     local title_widget = TextWidget:new{
         text = title,
         face = Font:getFace("cfont", 15),
-        max_width = math.max(1, metrics.cover_width - status_size - title_gap),
+        max_width = math.max(1, metrics.cover_width
+            - (self._has_download_status and status_size + title_gap or 0)),
     }
-    self._has_download_status = true
-    self._download_status_checked = self.cached == true
-    local title_line = HorizontalGroup:new{
-        DownloadStatus:new{ size = status_size, downloaded = self._download_status_checked },
-        HorizontalSpan:new{ width = title_gap },
-        title_widget,
+    local title_line = HorizontalGroup:new{}
+    if self._has_download_status then
+        title_line[#title_line + 1] = DownloadStatus:new{ size = status_size }
+        title_line[#title_line + 1] = HorizontalSpan:new{ width = title_gap }
+    end
+    title_line[#title_line + 1] = title_widget
+    -- The enclosing fixed-width frame prevents CenterContainer from centering
+    -- a short title line: every book title starts at the cover's left edge.
+    local title_frame = FrameContainer:new{
+        width = metrics.cover_width,
+        height = metrics.title_height,
+        bordersize = 0,
+        radius = 0,
+        margin = 0,
+        padding = 0,
+        background = Blitbuffer.COLOR_WHITE,
+        title_line,
     }
     self.frame = FrameContainer:new{
         bordersize = 0,
@@ -273,7 +287,7 @@ function CoverCell:init()
                 VerticalSpan:new{ width = metrics.title_gap },
                 CenterContainer:new{
                     dimen = Geom:new{ w = metrics.cover_width, h = metrics.title_height },
-                    title_line,
+                    title_frame,
                 },
             },
         },

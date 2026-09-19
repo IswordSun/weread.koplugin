@@ -305,7 +305,7 @@ expect(cover_view._item_rows[1].status == nil,
     "cover bookshelf retained date or cache status metadata")
 expect(cover_view._item_rows[1]._has_download_status == true
         and cover_view._item_rows[1]._download_status_checked == true
-        and cover_view._item_rows[2]._has_download_status == true
+        and cover_view._item_rows[2]._has_download_status == false
         and cover_view._item_rows[2]._download_status_checked == false,
     "cover bookshelf download status did not follow download state")
 expect(cover_view._item_rows[1].width == 200

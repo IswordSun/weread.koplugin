@@ -232,7 +232,7 @@ assert(store:get("book", "display", "single") == true,
     "an existing partial projection was not activated when reopening the book")
 -- Opening a book may display saved projections, but it never starts a sync.
 do
-    local starts = 0
+    local sync_starts = 0
     local automatic_context = {
         path = "automatic", book_id = "automatic", document_key = "automatic",
         binding = { automatic = true }, store = store, statuses = {}, ranges = {},
@@ -246,10 +246,10 @@ do
         _annotationSummary = function() return { located = 0 } end,
         _usesUnifiedAnnotations = function() return true end,
         _refreshAnnotationOverlay = function() end,
-        _runAnnotationJob = function() starts = starts + 1 end,
+        _runAnnotationJob = function() sync_starts = sync_starts + 1 end,
     }, { __index = Controller })
     automatic:onUnifiedAnnotationsReady()
-    assert(starts == 0, "opening a book started an automatic annotation sync")
+    assert(sync_starts == 0, "opening a book started an automatic annotation sync")
 end
 -- Clearing is the explicit refresh path: shared annotations and every file's
 -- coordinates are removed book-wide, even for chapters absent from the current

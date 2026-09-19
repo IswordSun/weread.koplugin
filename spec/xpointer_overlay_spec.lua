@@ -180,6 +180,11 @@ local invalidations = 0
 local host = {
     _xpointer_overlay = {
         invalidate = function() invalidations = invalidations + 1 end,
+        invalidateLayout = function(self)
+            self._annotation_refresh_page = nil
+            self:invalidate()
+        end,
+        _annotation_refresh_page = 1,
     },
 }
 for name, method in pairs(Controller) do
@@ -188,6 +193,8 @@ end
 Controller.onUpdatePos(host)
 expect(invalidations == 1,
     "UpdatePos did not invalidate cached boxes after typography reflow")
+expect(host._xpointer_overlay._annotation_refresh_page == nil,
+    "UpdatePos retained the page-level annotation refresh guard")
 Controller.onDocumentRerendered(host)
 expect(invalidations == 2,
     "DocumentRerendered did not retain the layout invalidation fallback")

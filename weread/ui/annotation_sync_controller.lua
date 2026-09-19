@@ -221,7 +221,12 @@ function M:_currentAnnotationChapter(context)
     if document and type(document.getXPointer) == "function" then
         local ok, point = pcall(document.getXPointer, document)
         local index = ok and self:_annotationChapterIndex(context, point)
-        if index and context.chapters[index] then return context.chapters[index] end
+        local chapter = index and context.chapters[index]
+        local range = chapter and context.ranges[Chapters.uid(chapter)]
+        if chapter and (not range or not range.end_xpointer
+            or compare_xpointers(document, point, range.end_xpointer) == 1) then
+            return chapter
+        end
     end
     if #context.chapters == 1 then return context.chapters[1] end
 end

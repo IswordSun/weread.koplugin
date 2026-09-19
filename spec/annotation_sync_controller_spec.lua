@@ -199,6 +199,18 @@ host._runAnnotationJob = function(_self, _context, options) synced_chapters = op
 host:startUnifiedAnnotationSync({ offline = true })
 assert(#synced_chapters == 1 and synced_chapters[1].chapterUid == "110",
     "default annotation sync did not limit work to the current chapter")
+host:startUnifiedAnnotationSync({ offline = true, all_chapters = true })
+assert(#synced_chapters == #context.chapters,
+    "explicit whole-book sync did not retain every chapter")
+context.ranges["110"].end_xpointer = "1150"
+host.ui.document.getXPointer = function() return "1200" end
+synced_chapters = nil
+local notices_before_gap = #notices
+host:startUnifiedAnnotationSync({ offline = true })
+assert(synced_chapters == nil and #notices == notices_before_gap + 1,
+    "an unmapped reader position silently synced the preceding chapter")
+context.ranges["110"].end_xpointer = nil
+host.ui.document.getXPointer = function() return "1120" end
 host._runAnnotationJob = original_run_annotation_job
 -- Matching one selected chapter must activate its projection immediately;
 -- waiting for every mapped chapter leaves valid underlines invisible.

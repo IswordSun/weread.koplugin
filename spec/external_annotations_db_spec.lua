@@ -28,6 +28,7 @@ package.preload["libs/libkoreader-lfs"] = function()
 end
 
 local databases = {}
+local busy_timeouts = {}
 local fail_open
 package.preload["lua-ljsqlite3/init"] = function()
     return {
@@ -39,6 +40,9 @@ package.preload["lua-ljsqlite3/init"] = function()
             }
             local data = databases[path]
             local db = {}
+            db.set_busy_timeout = function(_db, timeout)
+                busy_timeouts[#busy_timeouts + 1] = timeout
+            end
             db.exec = function(_db, sql)
                 if sql:find("DELETE FROM sync_chapters", 1, true) then
                     data.sync_chapters = {}
@@ -201,6 +205,14 @@ expect(checkpoint.chapters[1].complete == true
 expect(store:clearSyncCheckpoint("/books/第一炉香.epub")
         and store:getSyncCheckpoint("/books/第一炉香.epub") == nil,
     "completed sync checkpoint was not cleared")
+
+expect(#busy_timeouts == 0, "UI database access must not wait on background locks")
+store.busy_timeout_ms = 1000
+local worker_db = assert(store:open("/books/第一炉香.epub", false))
+worker_db:close()
+expect(#busy_timeouts == 1 and busy_timeouts[1] == 1000,
+    "background database connection did not enable bounded lock retry")
+store.busy_timeout_ms = nil
 
 expect(store:clearDocument("/books/第一炉香.epub"),
     "per-book database could not be cleared")

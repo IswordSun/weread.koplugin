@@ -79,7 +79,7 @@ function M:_prepareAnnotationContext(online, refresh_catalog)
     if not binding then return nil end
     local context = self._annotation_context
     if not refresh_catalog and context and context.path == path and context.book_id == tostring(binding.book_id)
-        and (#context.chapters > 0 or not online) then
+        and (context.catalog and #context.catalog > 0 or not online) then
         perf("context_cached", started)
         return context
     end
@@ -88,8 +88,7 @@ function M:_prepareAnnotationContext(online, refresh_catalog)
     local book_id = tostring(binding.book_id)
     local book = books[book_id] or books[tonumber(book_id)]
     local descriptor = binding.automatic and Chapters.descriptor(book, path)
-    local catalog = descriptor and descriptor.chapters
-        or store:get(book_id, "meta", "catalog") or book and book.chapters
+    local catalog = store:get(book_id, "meta", "catalog") or book and book.chapters
     if online and (not catalog or refresh_catalog) then
         local remote = { bookId = book_id, book_id = book_id, title = binding.title,
             author = binding.author, format = binding.format }
@@ -99,8 +98,11 @@ function M:_prepareAnnotationContext(online, refresh_catalog)
         store:put(book_id, "meta", "catalog", catalog)
         if refresh_catalog then store:put(book_id, "meta", "prune_catalog", catalog) end
     end
-    started = perf("annotation_catalog", started, "chapters=", #(catalog or {}))
-    local selected, ranges = Chapters.map(self.ui.document, catalog or {}, descriptor)
+    catalog = catalog or descriptor and descriptor.chapters or {}
+    local document_key = store.documentKey(path)
+    local overrides = store:get(book_id, "chapter_mapping", document_key)
+    started = perf("annotation_catalog", started, "chapters=", #catalog)
+    local selected, ranges = Chapters.map(self.ui.document, catalog, descriptor, overrides)
     started = perf("chapter_mapping", started, "chapters=", #selected)
     local prune_catalog = store:get(book_id, "meta", "prune_catalog")
     if prune_catalog then
@@ -111,7 +113,7 @@ function M:_prepareAnnotationContext(online, refresh_catalog)
         end
         selected = retained
     end
-    if not descriptor then
+    if not descriptor or overrides then
         -- Legacy combined EPUBs and arbitrary local editions may contain only
         -- part of the remote catalog. Never fetch chapters absent from this file.
         local mapped = {}
@@ -120,13 +122,13 @@ function M:_prepareAnnotationContext(online, refresh_catalog)
         end
         selected = mapped
     end
-    local document_key = store.documentKey(path)
     started = perf("document_identity", started)
     store:importLegacy(book_id, path, document_key)
     started = perf("legacy_import", started)
     context = { path = path, book_id = book_id, binding = binding, book = book,
         store = store, document_key = document_key, chapters = selected, ranges = ranges,
-        descriptor = descriptor, statuses = store:reconcileRanges(book_id, document_key, ranges) }
+        descriptor = descriptor, catalog = catalog, overrides = overrides,
+        statuses = store:reconcileRanges(book_id, document_key, ranges) }
     perf("saved_annotation_status", started)
     self._annotation_context = context
     return context
@@ -215,7 +217,12 @@ end
 
 function M:_refreshAnnotationOverlay()
     local context, overlay = self._annotation_context, self._xpointer_overlay
-    if not context or not overlay or overlay.enabled == false or #context.chapters == 0 then return end
+    if not context or not overlay or overlay.enabled == false then return end
+    if #context.chapters == 0 then
+        overlay._annotation_window = nil
+        overlay:setRecords({})
+        return
+    end
     if context.binding.automatic and not (context.descriptor and context.descriptor.clean)
         and not self._unified_annotations_active then
         local generation = context.generation or 0
@@ -265,18 +272,24 @@ end
 function M:_cancelUnifiedAnnotationSync(preserve_pending)
     local request = self._external_annotation_sync
     if not request then return end
+    request.cancelled = true
     if request.job then request.job.cancelled = true end
-    if request.progress then request.progress:close() end
+    local dismiss = request.progress and request.progress.dismiss_callback
+    if request.progress then
+        request.progress.dismiss_callback = nil
+        request.progress:close()
+    end
     if request.guard then require("weread.lib.standby_guard").release(request.guard) end
     request.guard = nil
+    if not preserve_pending then self._annotation_pending_prefetch = nil end
     if request.worker_handle and self.prefetch_worker then
-        request.cancelled = true
         self.prefetch_worker:cancel(request.worker_handle, "cancelled")
-        if not preserve_pending then self._annotation_pending_prefetch = nil end
         return
     end
     self._external_annotation_sync = nil
-    if not preserve_pending then self._annotation_pending_prefetch = nil end
+    -- Clear ownership before resuming Trapper: cancellation must not deliver
+    -- a late response, schedule a retry or close a newer job's dialog.
+    if dismiss then dismiss() end
 end
 
 function M:_finishAnnotationPrefetchWorker(request, result)
@@ -285,7 +298,8 @@ function M:_finishAnnotationPrefetchWorker(request, result)
         request.guard = nil
     end
     request.worker_handle = nil
-    if type(result) == "table" and result.ok then
+    if self._external_annotation_sync ~= request then return end
+    if not request.cancelled and type(result) == "table" and result.ok then
         if result.value and result.value.auth then
             local WorkerSettings = require("weread.lib.worker_settings")
             if not WorkerSettings.merge(self.settings, request.auth_fingerprint,
@@ -297,9 +311,7 @@ function M:_finishAnnotationPrefetchWorker(request, result)
         logger.warn("annotation prefetch worker failed:",
             tostring(type(result) == "table" and result.error or "no result"))
     end
-    if self._external_annotation_sync == request then
-        self._external_annotation_sync = nil
-    end
+    self._external_annotation_sync = nil
     local pending = self._annotation_pending_prefetch
     self._annotation_pending_prefetch = nil
     if pending then self:_runAnnotationJob(pending.context, pending.options) end
@@ -347,8 +359,34 @@ function M:_runAnnotationPrefetchWorker(request, context, options)
     return ok
 end
 
+-- Same pipe/termination path as chapter downloads. Never run the whole
+-- annotation job in a child: matching uses the open document, and completed
+-- thought batches must be committed by the parent before starting the next one.
+function M:_runAnnotationNetwork(request, task)
+    local WorkerSettings = require("weread.lib.worker_settings")
+    local fingerprint = WorkerSettings.fingerprint(self.settings)
+    local completed, result = request.trapper:dismissableRunInSubprocess(function()
+        local auth_result = WorkerSettings.capture(self.settings)
+        local ok, values = xpcall(function() return { task() } end, debug.traceback)
+        return { ok = ok, values = values, auth = auth_result() }
+    end, request.progress)
+    request.progress.dismiss_callback = nil
+    if self._external_annotation_sync ~= request or request.cancelled then return end
+    if not completed then error("could not start annotation worker") end
+    if not result then error("annotation worker returned no result") end
+    if result.auth then WorkerSettings.merge(self.settings, fingerprint, result.auth) end
+    if not result.ok then error(result.values, 0) end
+    return result.values
+end
+
 function M:_runAnnotationJob(context, options)
     options = options or {}
+    if options.background or options.prefetch then
+        if not self:canPrefetchAnnotations() then return false end
+        -- Every automatic path must use the headless worker. Hiding a progress
+        -- dialog does not make network, parsing or SQLite work non-blocking.
+        options.background, options.prefetch = true, true
+    end
     if self._external_annotation_sync then
         if options.background then
             self._annotation_pending_prefetch = { context = context, options = options }
@@ -375,6 +413,11 @@ function M:_runAnnotationJob(context, options)
         "background=", options.background == true, "chapters=", #(options.chapters or context.chapters))
     local job_started
     if not options.background then
+        local ok_ffi, ffiutil = pcall(require, "ffi/util")
+        if ok_ffi and type(ffiutil.runInSubProcess) == "function" then
+            local ok_trapper, trapper = pcall(require, "ui/trapper")
+            if ok_trapper then request.trapper = trapper end
+        end
         local job_chapters = options.chapters or context.chapters
         request.progress = require("weread.ui.download_dialog"):new{
             title = _("Sync underlines and thoughts"),
@@ -396,19 +439,33 @@ function M:_runAnnotationJob(context, options)
         chapters = options.chapters or context.chapters, ranges = context.ranges,
         document = not options.prefetch and self.ui.document or nil,
         document_key = not options.prefetch and context.document_key or nil,
-        refresh = options.refresh, offline = options.offline,
+        refresh = options.refresh or options.clear_existing, clear_existing = options.clear_existing,
+        offline = options.offline, async_network = request.trapper ~= nil,
         is_online = function() return self:isNetworkConnected() end,
-        fetch_source = function(chapter)
-            local html = Content.fetch_chapter_xhtml(self.client, self.settings, source_book, chapter)
-            if source_book._content_format == "txt" then
-                return context.store:get(context.book_id, "original", Chapters.uid(chapter)) or {}
+        on_reset = function()
+            for _, chapter in ipairs(options.chapters or context.chapters) do
+                context.statuses[context.store:projectionKey(context.document_key, Chapters.uid(chapter))] = nil
             end
+            context.generation = (context.generation or 0) + 1
+            self:_refreshAnnotationOverlay()
+            UIManager:setDirty(self.dialog, "ui")
+        end,
+        fetch_source = function(chapter)
+            local html, format = request.job:callNetwork(function()
+                local body = Content.fetch_chapter_xhtml(self.client, self.settings, source_book, chapter)
+                if source_book._content_format == "txt" then
+                    body = context.store:get(context.book_id, "original", Chapters.uid(chapter)) or {}
+                end
+                return body, source_book._content_format
+            end)
+            source_book._content_format = format
             return html
         end,
         on_chapter = function(uid, projection)
             if projection then
                 local key = context.store:projectionKey(context.document_key, uid)
-                context.statuses[key] = { stats = projection.stats, revision = projection.revision }
+                context.statuses[key] = { stats = projection.stats, revision = projection.revision,
+                    matcher_version = projection.matcher_version, range_key = projection.range_key }
                 context.generation = (context.generation or 0) + 1
                 self:_refreshAnnotationOverlay()
                 UIManager:setDirty(self.dialog, "ui")
@@ -425,6 +482,17 @@ function M:_runAnnotationJob(context, options)
         end
         if not job_started then job_started = perf("annotation_job_start", queued) end
         local done, state = request.job:step()
+        while done == false and state and state.network do
+            -- Trapper yields from this outer coroutine, never from Sync.thread.
+            -- Resuming the pipeline before the child returns would lose data.
+            local values = self:_runAnnotationNetwork(request, state.network)
+            if self._external_annotation_sync ~= request then return end
+            if file(self) ~= context.path or self._reader_session_gen ~= request.session then
+                self:_cancelUnifiedAnnotationSync()
+                return
+            end
+            done, state = request.job:step(unpack(values, 1, 3))
+        end
         if done == nil or done then
             perf("annotation_job_total", job_started, "ok=", done == true)
             local pending = self._annotation_pending_prefetch
@@ -492,19 +560,22 @@ function M:_runAnnotationJob(context, options)
             request.progress:reportProgress(annotation_progress(state))
             request.progress:setTitle(title)
         end
-        UIManager:scheduleIn(state.delay or 0.01, safe_step)
+        UIManager:scheduleIn(math.max(0.1, state.delay or 0.1), safe_step)
     end
     safe_step = function()
-        local ok, err = xpcall(step, debug.traceback)
-        if not ok then
-            self:_cancelUnifiedAnnotationSync()
-            logger.warn("annotation_sync UI:", err)
-            if not options.background then
-                self:showInfo(T(_("Annotation sync paused: %1\nSaved progress will be reused."), tostring(err)))
+        local function run()
+            local ok, err = xpcall(step, debug.traceback)
+            if not ok and self._external_annotation_sync == request then
+                self:_cancelUnifiedAnnotationSync()
+                logger.warn("annotation_sync UI:", err)
+                if not options.background then
+                    self:showInfo(T(_("Annotation sync paused: %1\nSaved progress will be reused."), tostring(err)))
+                end
             end
         end
+        if request.trapper then request.trapper:wrap(run) else run() end
     end
-    UIManager:scheduleIn(0.01, safe_step)
+    UIManager:scheduleIn(0.1, safe_step)
 end
 
 function M:startUnifiedAnnotationSync(options)
@@ -550,7 +621,7 @@ function M:ensureAnnotationDisplay()
     if summary and summary.chapters > 0 then return false end
     local ConfirmBox = require("ui/widget/confirmbox")
     UIManager:show(ConfirmBox:new{
-        text = T(_("Match underlines and thoughts for “%1”?\nOnly chapters in this file are processed. Future prefetched chapters can prepare annotations automatically."), binding.title or binding.book_id),
+        text = T(_("Match underlines and thoughts for “%1”?\nOnly chapters in this file are processed. Automatic downloads require both chapter prefetch and annotation prefetch; position matching is always manual."), binding.title or binding.book_id),
         ok_text = _("Start matching"), cancel_text = _("Later"),
         ok_callback = function()
             local cache = self.settings:get("cache")
@@ -581,44 +652,41 @@ function M:onUnifiedAnnotationsReady()
     started = perf("annotation_display_state", started)
     self:_refreshAnnotationOverlay()
     started = perf("saved_annotation_overlay", started)
-    if context.store:get(context.book_id, "meta", "enabled")
+    if self:canPrefetchAnnotations()
+        and context.store:get(context.book_id, "meta", "enabled")
         and not context.store:get(context.book_id, "manual_only", context.document_key) then
-        -- Only already cached chapters are matched automatically on open.
-        -- Network work follows the explicit sync/prefetch path.
-        local cached = {}
-        local sources = context.store:list(context.book_id, "source_status")
+        -- Resume downloads only with both prefetch switches enabled. Saved
+        -- source data never triggers automatic document-position matching.
+        local pending = {}
         local partials = context.store:list(context.book_id, "download")
+        local refreshes = context.store:list(context.book_id, "refresh")
         for _, chapter in ipairs(context.chapters) do
             local uid = Chapters.uid(chapter)
-            local source = sources[uid]
-            local key = context.store:projectionKey(context.document_key, uid)
-            local status = context.statuses[key]
-            local partial = partials[uid]
-            if (source and (not status or status.revision ~= source.revision))
-                or (partial and self:isNetworkConnected()) then
-                cached[#cached + 1] = chapter
+            if partials[uid] or refreshes[uid] then
+                pending[#pending + 1] = chapter
             end
         end
-        if #context.chapters == 1 and #cached == 0 and self:isNetworkConnected()
-            and context.binding.automatic and self:isAnnotationPrefetchEnabled()
-            and not sources[Chapters.uid(context.chapters[1])] then
-            cached = context.chapters
+        if #context.chapters == 1 and #pending == 0 and context.binding.automatic
+            and not context.store:get(context.book_id, "source_status", Chapters.uid(context.chapters[1])) then
+            pending = context.chapters
         end
-        perf("automatic_match_selection", started, "pending_chapters=", #cached,
+        perf("annotation_prefetch_selection", started, "pending_chapters=", #pending,
             "mapped_chapters=", #context.chapters)
-        if #cached > 0 then self:_runAnnotationJob(context, {
-            background = true, offline = not self:isNetworkConnected(), chapters = cached }) end
+        if #pending > 0 then self:_runAnnotationJob(context, {
+            background = true, prefetch = true, chapters = pending }) end
     else
-        perf("automatic_match_disabled", started)
+        perf("annotation_prefetch_disabled", started)
     end
 end
 
 function M:prefetchChapterAnnotations(book, chapter)
+    if not self:canPrefetchAnnotations() then return end
     local book_id = tostring(book.book_id or book.bookId)
     local store = self:_annotationStore()
-    if not self:isAnnotationPrefetchEnabled()
-        or not store:get(book_id, "meta", "enabled") then return end
-    if store:get(book_id, "source_status", Chapters.uid(chapter)) then return end
+    if not store:get(book_id, "meta", "enabled") then return end
+    local uid = Chapters.uid(chapter)
+    if store:get(book_id, "source_status", uid)
+        and not store:get(book_id, "refresh", uid) then return end
     self:_runAnnotationJob({ book_id = book_id, book = book, binding = book,
         store = store, chapters = { chapter } }, { background = true, prefetch = true })
 end
@@ -627,49 +695,143 @@ function M:isAnnotationPrefetchEnabled()
     return self.settings:get("cache").prefetch_annotations == true
 end
 
+function M:canPrefetchAnnotations()
+    return self.settings:get("cache").auto_prefetch_next_chapter == true
+        and self:isAnnotationPrefetchEnabled() and self:isNetworkConnected()
+end
+
+function M:cancelAnnotationPrefetch()
+    local pending = self._annotation_pending_prefetch
+    if pending and pending.options.prefetch then self._annotation_pending_prefetch = nil end
+    local request = self._external_annotation_sync
+    if request and request.prefetch then
+        -- A user-requested match may be waiting for the child to exit.
+        self:_cancelUnifiedAnnotationSync(true)
+    end
+end
+
 function M:setAnnotationPrefetchEnabled(enabled)
     local cache = self.settings:get("cache")
     cache.prefetch_annotations = enabled == true
     self.settings:set("cache", cache)
     self.settings:flush()
-    local request = self._external_annotation_sync
-    if not enabled and request and request.prefetch then
-        self:_cancelUnifiedAnnotationSync()
-    end
-    if not enabled then self._annotation_pending_prefetch = nil end
+    if not enabled then self:cancelAnnotationPrefetch() end
     return true
+end
+
+function M:_annotationSelectionModel(context)
+    local document, toc, current = self.ui.document
+    local ok, entries = pcall(document.getToc, document)
+    if ok and type(entries) == "table" then toc = entries end
+    local ok_point, point = pcall(document.getXPointer, document)
+    if ok_point then current = self:_annotationChapterIndex(context, point) end
+    local sources = context.store:list(context.book_id, "source_status")
+    local refreshing = context.store:list(context.book_id, "refresh")
+    local matcher = require("weread.lib.external_annotations").MATCHER_VERSION
+    return require("weread.lib.chapter_selection"):new(context.chapters, context.ranges, toc, current,
+        function(chapter)
+            local uid = Chapters.uid(chapter)
+            local status = context.statuses[context.store:projectionKey(context.document_key, uid)]
+            return not refreshing[uid] and sources[uid] and status
+                and status.revision == sources[uid].revision and status.matcher_version == matcher
+                and status.range_key == Chapters.rangeKey(context.ranges[uid]) or false
+        end)
+end
+
+function M:_saveAnnotationChapterMatch(context, node, uid)
+    local binding = self:_annotationBinding()
+    if file(self) ~= context.path or not binding or tostring(binding.book_id) ~= context.book_id then return end
+    if not node.xpointer then return end
+    if uid then
+        local range = context.ranges[uid]
+        assert(not range or range.start_xpointer == node.xpointer, _("This WeRead chapter is already linked."))
+    end
+    local overrides = {}
+    for point, value in pairs(context.overrides or {}) do overrides[point] = value end
+    overrides[node.xpointer] = uid or false
+    self:_cancelUnifiedAnnotationSync()
+    local _, ranges = Chapters.map(self.ui.document, context.catalog, context.descriptor, overrides)
+    local affected = {}
+    for chapter_uid in pairs(context.ranges) do affected[chapter_uid] = true end
+    for chapter_uid in pairs(ranges) do affected[chapter_uid] = true end
+    local changes = { { kind = "chapter_mapping", key = context.document_key, value = overrides } }
+    for chapter_uid in pairs(affected) do
+        if Chapters.rangeKey(context.ranges[chapter_uid]) ~= Chapters.rangeKey(ranges[chapter_uid]) then
+            -- Include partial/legacy projections with no completed status.
+            -- A neighbouring chapter's end boundary may have changed too.
+            local key = context.store:projectionKey(context.document_key, chapter_uid)
+            for _, kind in ipairs({ "projection", "matching", "status" }) do
+                changes[#changes + 1] = { kind = kind, key = key }
+            end
+        end
+    end
+    context.store:write(context.book_id, changes)
+    self._annotation_context = nil
+    local updated = self:_prepareAnnotationContext(false)
+    if self._xpointer_overlay then
+        self._xpointer_overlay._annotation_window = nil
+        self._xpointer_overlay:setRecords({})
+    end
+    self:_refreshAnnotationOverlay()
+    UIManager:setDirty(self.dialog, "ui")
+    return updated
+end
+
+function M:_chooseAnnotationChapterMatch(context, node, on_saved)
+    local session, menu = self._reader_session_gen
+    local function save(uid)
+        if session ~= self._reader_session_gen then return end
+        local ok, updated = pcall(self._saveAnnotationChapterMatch, self, context, node, uid)
+        if not ok then
+            self:showInfo(T(_("Could not save chapter match: %1"), tostring(updated)))
+        elseif updated then
+            if menu then UIManager:close(menu) end
+            on_saved(updated)
+        end
+    end
+    local items = {}
+    if node.chapter then
+        items[#items + 1] = { text = _("Remove this chapter match"), callback = function() save(false) end }
+    end
+    for _index, chapter in ipairs(context.catalog) do
+        local uid = Chapters.uid(chapter)
+        local range = context.ranges[uid]
+        local occupied = range and range.start_xpointer ~= node.xpointer
+        local title = string.rep("  ", math.min(5, math.max(0, (tonumber(chapter.level) or 1) - 1)))
+            .. (chapter.title or uid)
+        if occupied then title = title .. " · " .. T(_("Linked to: %1"), range.title or range.toc_index) end
+        items[#items + 1] = { text = title, dim = occupied, select_enabled = not occupied,
+            mandatory = range and not occupied and _("Current") or nil,
+            callback = function() if not occupied then save(uid) end end }
+    end
+    menu = self:showList(_("Choose WeRead chapter"), items, nil, { subtitle = node.title })
+    return menu
 end
 
 function M:chooseAnnotationChapters()
     if not self:_annotationBinding() then return self:bindExternalAnnotationsBook() end
     local function show()
         local context = self:_prepareAnnotationContext(self:isNetworkConnected())
-        if not context or #context.chapters == 0 then
-            self:showInfo(_("No matching chapters found.")); return
+        if not context or not context.catalog or #context.catalog == 0 then
+            self:showInfo(_("No chapter catalog available.")); return
         end
-        local document = self.ui and self.ui.document
-        local current_index, toc
-        if document then
-            local ok, point = pcall(document.getXPointer, document)
-            if ok then current_index = self:_annotationChapterIndex(context, point) end
-            local ok_toc, entries = pcall(function() return document:getToc() end)
-            if ok_toc and type(entries) == "table" then toc = entries end
-        end
-        local Selection = require("weread.lib.chapter_selection")
-        local function is_matched(chapter)
-            return context.statuses[context.store:projectionKey(
-                context.document_key, Chapters.uid(chapter))] ~= nil
-        end
+        local session = self._reader_session_gen
         return require("weread.ui.annotation_chapter_picker").show{
-            model = Selection:new(context.chapters, context.ranges, toc, current_index, is_matched),
-            book_title = context.binding.title,
+            model = self:_annotationSelectionModel(context), book_title = context.binding.title,
+            on_edit = function(node, rebuild)
+                self:_chooseAnnotationChapterMatch(context, node, function(updated)
+                    context = updated
+                    rebuild(self:_annotationSelectionModel(context))
+                end)
+            end,
             on_select = function(chapters)
-                self:startUnifiedAnnotationSync({ chapters = chapters, offline = not self:isNetworkConnected() })
+                if session ~= self._reader_session_gen or file(self) ~= context.path then return end
+                self:startUnifiedAnnotationSync({ chapters = chapters, clear_existing = true })
             end,
         }
     end
     local context = self:_prepareAnnotationContext(false)
-    if context and #context.chapters > 0 then return show() end
+    if context and context.catalog and #context.catalog > 0 then return show() end
     if not self:requireLogin(true, true) then return end
     self:runOnlineTask(_("Loading chapter list..."), show)
 end

@@ -75,6 +75,30 @@ python3 scripts/test_mock_weread.py
 
 该命令已接入普通 CI；真实 KOReader 冒烟仍在本地显式执行。
 
+## 划线想法专项回归
+
+先用下节命令创建新的隔离目录并保持 mock 服务运行。另一终端在 KOReader 运行目录执行，
+`WEREAD_PLUGIN_DIR` 为候选源码目录，`WEREAD_RUN_DIR` 为刚创建的隔离目录：
+
+```bash
+KO_HOME="$WEREAD_RUN_DIR/profile" EMULATE_READER=1 \
+    EMULATE_READER_W=600 EMULATE_READER_H=800 EMULATE_READER_DPI=167 \
+    ./luajit "$WEREAD_PLUGIN_DIR/spec/koreader/weread_annotations_mock.lua" \
+    > "$WEREAD_RUN_DIR/evidence/annotations.log" 2>&1
+```
+
+这项测试保留真实 Client、控件、事件循环、子进程、排版和 SQLite，验证：
+
+- 章节对应的取消与恢复、其他勾选保留、默认不勾选和“已获取”显示；
+- 慢请求中暂停、迟到响应、手动续传复用断点；
+- 两个预下载开关的组合、真实关书重开，以及后台续传期间翻页；
+- 任一设置关闭后停止运行和排队任务、后台不可用时不退回 UI 执行；
+- 界面持续读取状态时的后台 SQLite 保存、空结果重新获取及防休眠计数释放。
+
+日志、截图保存在 `evidence/`。大屏复测使用新的隔离目录并将尺寸改为 `1072×1448`。
+脚本包含故障注入，预期会记录一次“subprocess worker unavailable”；其它失败仍需排查。
+它覆盖本次注释变更，不等同于全部发版用例或真实微信服务验收。
+
 ## 开窗口给 ComputerUse 点击
 
 ```bash

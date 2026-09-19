@@ -263,7 +263,8 @@ function M:maybePrefetchNextChapter(book_id)
         on_complete = function(ok, value)
             if ok then
                 -- A promoted prefetch opens the new file immediately. Its
-                -- ReaderReady path will prepare annotations for that file, so
+                -- ReaderReady path can download source data for that file
+                -- when both prefetch switches are enabled, so
                 -- do not fork an annotation worker only to cancel it during
                 -- the document switch.
                 if self.prefetchChapterAnnotations

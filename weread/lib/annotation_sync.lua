@@ -39,13 +39,21 @@ function Sync:requireNetwork()
     end
 end
 
+-- The UI adapter runs yielded network work outside this pipeline coroutine.
+-- Only returned data is resumed here, so checkpoints and document access stay
+-- in the parent. Headless prefetch keeps its existing synchronous worker path.
+function Sync:callNetwork(fn)
+    if self.async_network then return coroutine.yield({ network = fn }) end
+    return fn()
+end
+
 function Sync:request(fn, progress)
     self:requireNetwork()
     for attempt = 1, 3 do
         self:yield(progress and progress.stage or "download",
             attempt == 1 and 0.3 or 2 ^ attempt, progress)
         self:requireNetwork()
-        local ok, data, err = fn()
+        local ok, data, err = self:callNetwork(fn)
         if ok and type(data) == "table" then return data end
         self:requireNetwork()
         if attempt == 3 then error(err or "Invalid annotation response") end
@@ -54,6 +62,11 @@ end
 
 function Sync:run()
     local store, book_id = self.store, self.book_id
+    if self.clear_existing then
+        self:requireNetwork()
+        store:clearChapters(book_id, self.chapters)
+        if self.on_reset then self.on_reset() end
+    end
     if self.refresh then
         local changes = {}
         for _, chapter in ipairs(self.chapters) do
@@ -265,9 +278,9 @@ function Sync:run()
     return { stage = "complete", completed = self.completed, total = #self.chapters }
 end
 
-function Sync:step()
+function Sync:step(...)
     if self.cancelled then return true, { stage = "paused" } end
-    local ok, value = coroutine.resume(self.thread)
+    local ok, value = coroutine.resume(self.thread, ...)
     if not ok then return nil, tostring(value) end
     return coroutine.status(self.thread) == "dead", value
 end

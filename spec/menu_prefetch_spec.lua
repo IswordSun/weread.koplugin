@@ -76,6 +76,7 @@ local thought_popup = {
 local available_version
 local annotations_visible = false
 local annotation_menu_updates = 0
+local prefetch_cancellations = 0
 local host = {
     ui = {},
     _xpointerOverlayPrototypeAvailable = function() return true end,
@@ -94,6 +95,7 @@ local host = {
         flush = function() flush_count = flush_count + 1 end,
     },
     downloader = { cancelPrefetch = function() end },
+    cancelAnnotationPrefetch = function() prefetch_cancellations = prefetch_cancellations + 1 end,
     updater = { available_version = function() return available_version end },
     isAnnotationPrefetchEnabled = function()
         return cache.prefetch_annotations == true
@@ -359,6 +361,11 @@ expect(cache.prefetch_annotations == true and menu_updates == 2,
     "annotation prefetch is enabled and refreshes the menu")
 expect(prefetch_items[3].enabled_func(),
     "notification setting is enabled while automatic prefetch is on")
+
+prefetch_items[1].callback({ updateItems = function() end })
+expect(not cache.auto_prefetch_next_chapter and cache.prefetch_annotations
+        and prefetch_cancellations == 1,
+    "disabling chapter prefetch cancels annotations while retaining the child preference")
 
 local underline_settings
 for _, item in ipairs(settings_items) do

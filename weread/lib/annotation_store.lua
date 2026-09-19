@@ -117,6 +117,21 @@ function Store:clearBook(book_id)
     return self.legacy:clearDocument("weread-book-" .. book_id)
 end
 
+-- Explicit per-chapter refresh. Retain the binding, catalog, manual mapping,
+-- original book text and monotonic generation; drop only fetched annotations
+-- and derived coordinates for these UIDs, including other local editions.
+function Store:clearChapters(book_id, chapters)
+    local changes = {}
+    for _, chapter in ipairs(chapters) do
+        local uid = require("weread.lib.annotation_chapters").uid(chapter)
+        for _, kind in ipairs({ "source", "source_status", "download", "batch",
+            "thought", "refresh", "projection", "matching", "status" }) do
+            changes[#changes + 1] = { kind = kind, uid = uid }
+        end
+    end
+    if #changes > 0 then self:write(book_id, changes) end
+end
+
 -- Delete whole-book derived data without relying on the currently mapped
 -- chapter list.  Catalog metadata, migration markers and cached original text
 -- are intentionally retained so matching can restart without rebuilding the

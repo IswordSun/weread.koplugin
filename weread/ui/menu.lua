@@ -437,6 +437,7 @@ function M:getSettingsMenuItems()
                                                 self.settings:set("cache", cache)
                                                 self.settings:flush()
                                                 if not enabled then
+                                                    self:cancelAnnotationPrefetch()
                                                     self.downloader:cancelPrefetch(
                                                         "setting_disabled")
                                                 elseif self._current_weread_book_id then

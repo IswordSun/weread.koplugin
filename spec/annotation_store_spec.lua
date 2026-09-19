@@ -48,6 +48,26 @@ store:put("book", "projection", "full:deleted", { records = {} }, "deleted")
 store:pruneCatalog("book", { { chapterUid = "1" }, { chapterUid = "2" } })
 assert(not store:get("book", "source", "deleted") and not store:get("book", "projection", "full:deleted"))
 assert(store:get("book", "source", "1"), "catalog cleanup removed a live chapter")
+-- Selective cleanup removes every annotation/projection for selected UIDs,
+-- across editions, while retaining the book text, mappings and other chapters.
+for _, kind in ipairs({ "source", "source_status", "download", "batch", "thought", "refresh",
+    "projection", "matching", "status" }) do
+    store:put("book", kind, "selected", { marker = kind }, "1")
+    store:put("book", kind, "other-edition", { marker = kind }, "1")
+    store:put("book", kind, "untouched", { marker = kind }, "2")
+end
+for _, kind in ipairs({ "meta", "chapter_mapping", "generation", "original", "migration" }) do
+    store:put("book", kind, "keep", { preserved = true }, "1")
+end
+store:clearChapters("book", { { chapterUid = "1" } })
+for _, kind in ipairs({ "source", "source_status", "download", "batch", "thought", "refresh",
+    "projection", "matching", "status" }) do
+    assert(not store:get("book", kind, "selected") and not store:get("book", kind, "other-edition"))
+    assert(store:get("book", kind, "untouched").marker == kind)
+end
+for _, kind in ipairs({ "meta", "chapter_mapping", "generation", "original", "migration" }) do
+    assert(store:get("book", kind, "keep").preserved)
+end
 assert(store:clearBook("book"), "book annotation database cleanup failed")
 assert(not store:get("book", "source", "1"), "book annotation database survived cleanup")
 helper.cleanup()

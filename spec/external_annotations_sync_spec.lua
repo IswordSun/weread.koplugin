@@ -234,5 +234,33 @@ done, reason = finish(new("missing-original", { { chapterUid = "6" } }, {
 }))
 assert(done == nil and reason == Sync.NETWORK_REQUIRED and #calls == count)
 assert(not store:get("book", "projection", "missing-original:6") and store:get("book", "download", "6"))
+-- Explicit picker refetch discards old selected data first; generic refresh
+-- above remains transactional. Offline refusal must happen before deletion.
+assert(finish(new("selected-refresh", chapters)))
+local untouched = json.encode(store:get("book", "source", "2"))
+local old_revision = store:get("book", "source_status", "1").revision
+count = #calls
+done, reason = finish(new("selected-refresh", { chapters[1] }, { clear_existing = true, offline = true }))
+assert(done == nil and reason == Sync.NETWORK_REQUIRED and #calls == count)
+assert(store:get("book", "source_status", "1").revision == old_revision)
+fail_batch = true
+local reset = false
+done = finish(new("selected-refresh", { chapters[1] }, { clear_existing = true, refresh = true,
+    on_reset = function()
+        reset = true
+        assert(not store:get("book", "source", "1") and not store:get("book", "projection", "selected-refresh:1"))
+    end,
+}))
+assert(done == nil and reset and calls[count + 1] == "u1")
+assert(not store:get("book", "status", "selected-refresh:1")
+    and not store:get("book", "thought", "1:1-2"), "failed refetch retained old selected results")
+assert(json.encode(store:get("book", "source", "2")) == untouched)
+fail_batch = false
+assert(finish(new("selected-refresh", { chapters[1] })), "failed selected refetch could not resume")
+assert(tonumber(store:get("book", "source_status", "1").revision) > tonumber(old_revision))
+empty = true
+assert(finish(new("selected-refresh", { chapters[1] }, { clear_existing = true, refresh = true })))
+assert(store:get("book", "status", "selected-refresh:1").stats.total == 0,
+    "successful zero-thought chapter must be recorded as retrieved")
 helper.cleanup()
 print("external_annotations_sync_spec: resume, cross-file reuse, empty updates and offline prefetch passed")

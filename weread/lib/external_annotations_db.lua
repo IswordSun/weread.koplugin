@@ -96,6 +96,7 @@ function ExternalAnnotationsDB:open(document_path, create)
         return nil, tostring(db or "database open failed")
     end
     local schema_ok, schema_err = pcall(function()
+        if self.busy_timeout_ms then db:set_busy_timeout(self.busy_timeout_ms) end
         db:exec("PRAGMA journal_mode=WAL")
         db:exec("PRAGMA synchronous=NORMAL")
         db:exec([[

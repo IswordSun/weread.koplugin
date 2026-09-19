@@ -7,6 +7,9 @@ local M = {}
 
 function M.run(settings, client, context, chapters, worker_context)
     local auth_result = WorkerSettings.capture(settings)
+    -- WAL connections can briefly contend when another process closes its
+    -- last reader. Let SQLite retry in this child, never in the UI thread.
+    context.store.legacy.busy_timeout_ms = 1000
     local source_book = context.book or {
         bookId = context.book_id,
         book_id = context.book_id,

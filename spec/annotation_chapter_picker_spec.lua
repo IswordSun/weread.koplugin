@@ -60,7 +60,7 @@ local kinds = {
     ["button"] = "button", ["focusmanager"] = "focus", ["container/framecontainer"] = "frame",
     ["horizontalgroup"] = "horizontal", ["verticalgroup"] = "vertical",
     ["horizontalspan"] = "hspan", ["verticalspan"] = "vspan", ["linewidget"] = "line",
-    ["textwidget"] = "text", ["titlebar"] = "title",
+    ["textwidget"] = "text", ["titlebar"] = "title", ["container/centercontainer"] = "center",
 }
 for name, kind in pairs(kinds) do
     package.preload["ui/widget/" .. name] = function() return Widget:extend{ kind = kind } end
@@ -82,10 +82,10 @@ package.preload["ui/widget/buttontable"] = function()
         self.buttons_layout = { {} }
         for index, entry in ipairs(self.buttons[1]) do
             local button = Button:new{ text = entry.text, callback = entry.callback, enabled = entry.enabled,
-                width = math.floor((self.width - sep) / 2), padding = scale(6) }
+                width = math.floor((self.width - sep * (#self.buttons[1] - 1)) / #self.buttons[1]), padding = scale(6) }
             row[#row + 1] = button
             self.buttons_layout[1][index] = button
-            if index == 1 then row[#row + 1] = Line:new{ dimen = { w = sep, h = button:getSize().h } } end
+            if index < #self.buttons[1] then row[#row + 1] = Line:new{ dimen = { w = sep, h = button:getSize().h } } end
         end
         self[1] = Vertical:new{ Line:new{ dimen = { w = self.width, h = sep } },
             Span:new{ width = scale(5) }, row, Span:new{ width = scale(5) } }
@@ -156,32 +156,39 @@ for _, size in ipairs({ { 600, 800 }, { 1072, 1448 }, { 800, 600 } }) do
     assert(live_buttons == initial, "page changes retained old widgets")
     assert(model.count == 0, "repeated toggling lost selection state")
     while view.page > 1 do view:onPrevPage() end
-    view.layout[1][3].callback() -- parent checkbox
-    assert(model.count == 2000)
-    view.layout[1][1].callback() -- collapse root
-    assert(view.pages == 1 and #model:visible() == 1 and model.count == 2000)
-    assert(live_buttons == 8, "collapsed subtree retained page widgets")
-    assert(view.actions.zero_sep and #view.actions.buttons_layout[1] == 2,
-        "picker does not use the native separated action bar")
-    view.layout[#view.layout][2].callback() -- fixed bottom match action
-    assert(chosen and #chosen == 2000 and chosen[1] == chapters[1])
+    view.layout[1][1].callback() -- parent selects only its own chapter
+    view.layout[2][1].callback()
+    assert(model.count == 2 and #model:visible() == 2000)
+    assert(view.actions.zero_sep and #view.actions.buttons_layout[1] == 1)
+    view.layout[#view.layout][1].callback()
+    assert(chosen and #chosen == 2 and chosen[1] == chapters[1] and chosen[2] == chapters[2])
     assert(live_buttons == 0, "closing picker retained native widget resources")
 end
--- Completed rows lose their checkbox; a mixed parent still selects the other
--- children. A fully matched book keeps both bottom actions disabled.
-local targets = { { chapterUid = "p", level = 1 }, { chapterUid = "done", level = 2 },
-    { chapterUid = "todo", level = 2 } }
-local mixed = Selection:new(targets, {}, nil, 2, function(chapter) return chapter.chapterUid ~= "todo" end)
-local view = Picker.show{ model = mixed, on_select = function() end }
-assert(not view.layout[2][2].enabled and not view.layout[2][3].enabled
-    and view.layout[2][3].text == "", "completed row retained an active checkbox")
-view.layout[2][3].callback(); assert(mixed.count == 0)
-view.layout[1][3].callback(); assert(mixed.count == 1 and #mixed:selection() == 1)
-assert(view.actions.buttons_layout[1][2].text == "Match (1)")
+-- Editing rebuilds the current page and preserves other selected rows. A
+-- completed row remains selectable; an unmatched row only permits editing.
+width, height = 600, 800
+local targets, toc, ranges = {}, {}, {}
+for index = 1, 30 do
+    toc[index] = { title = "Local " .. index, xpointer = tostring(index) }
+    if index > 1 then
+        targets[#targets + 1] = { chapterUid = tostring(index), title = "Remote " .. index }
+        ranges[tostring(index)] = { toc_index = index }
+    end
+end
+local model = Selection:new(targets, ranges, toc, 20, function() return true end)
+local view = Picker.show{ model = model, on_select = function() end, on_edit = function(node, rebuild)
+    ranges[tostring(node.index)] = nil
+    local remaining = {}
+    for _, chapter in ipairs(targets) do
+        if chapter.chapterUid ~= tostring(node.index) then remaining[#remaining + 1] = chapter end
+    end
+    rebuild(Selection:new(remaining, ranges, toc))
+end }
+local page = view.page
+view.layout[1][1].callback(); view.layout[2][1].callback()
+assert(model.count == 2, "retrieved rows cannot be selected again")
+view.layout[2][3].callback()
+assert(view.page == page and view.model.count == 1 and not view.layout[2][1].enabled,
+    "editing lost the page/other selections or retained an unmatched selection")
 view:onClose(); assert(live_buttons == 0)
-local complete = Selection:new(targets, {}, nil, 2, function() return true end)
-view = Picker.show{ model = complete, on_select = function() error("completed book submitted") end }
-assert(not view.layout[1][3].enabled and not view.actions.buttons_layout[1][1].enabled
-    and not view.actions.buttons_layout[1][2].enabled)
-view:onClose(); assert(live_buttons == 0)
-print("annotation_chapter_picker_spec: pagination, parent callbacks, geometry and bounded widgets passed; peak=" .. max_buttons)
+print("annotation_chapter_picker_spec: independent selection, editing, geometry and bounded widgets passed; peak=" .. max_buttons)

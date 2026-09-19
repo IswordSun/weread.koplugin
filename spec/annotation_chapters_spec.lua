@@ -80,4 +80,18 @@ assert(numbered_ranges["51"] and numbered_ranges["51"].start_xpointer == "400",
     "same title body with different chapter numbers did not match")
 assert(numbered_ranges["52"] and numbered_ranges["52"].start_xpointer == "410",
     "volume-number prefix did not match by title body")
+-- Manual choices reserve local anchors before all automatic matching passes.
+local _, manual = Chapters.map(doc, catalog, nil, { ["3"] = "12" })
+assert(manual["12"].start_xpointer == "3" and manual["9"].end_xpointer == "3")
+assert(manual["12"].end_xpointer == "10", "unmatched sibling no longer bounds a manual chapter")
+local _, removed = Chapters.map(doc, catalog, nil, { ["0"] = false })
+assert(not removed["9"] and removed["12"], "explicit removal was auto-matched again")
+local _, missing = Chapters.map(doc, catalog, nil, { ["0"] = "removed-uid" })
+assert(not missing["9"], "a missing remote override silently switched to another chapter")
+local _, duplicate = Chapters.map(doc, catalog, nil, { ["0"] = "12", ["3"] = "12" })
+assert(duplicate["12"].start_xpointer == "0" and not duplicate["9"], "duplicate override reused a remote chapter")
+local _, replaced = Chapters.map(partial_doc, catalog, descriptor, { ["0"] = "12" })
+assert(replaced["12"].start_xpointer == "0" and not replaced["9"] and replaced["15"],
+    "manual choice outside a generated partial EPUB descriptor was lost")
+assert(descriptor.chapters[1] == catalog[1], "annotation mapping modified the download/progress descriptor")
 print("annotation_chapters_spec: nested TOC, UTF-8 titles and noncontiguous selections passed")

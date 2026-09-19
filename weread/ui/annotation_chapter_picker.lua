@@ -2,6 +2,7 @@
 local BB = require("ffi/blitbuffer")
 local Button = require("ui/widget/button")
 local ButtonTable = require("ui/widget/buttontable")
+local CenterContainer = require("ui/widget/container/centercontainer")
 local Device = require("device")
 local Font = require("ui/font")
 local FocusManager = require("ui/widget/focusmanager")
@@ -42,9 +43,7 @@ function Picker:actionBar()
     local bar = ButtonTable:new{
         width = self.width, zero_sep = true, show_parent = self,
         buttons = { {
-            { text = _("Clear selection"), enabled = self.model.count > 0,
-                callback = function() self.model:clear(); self:rebuild() end },
-            { text = T(_("Match (%1)"), self.model.count), enabled = self.model.count > 0,
+            { text = T(_("Get thoughts (%1 chapters)"), self.model.count), enabled = self.model.count > 0,
                 callback = function()
                     local chapters = self.model:selection()
                     if #chapters == 0 then return end
@@ -60,7 +59,8 @@ end
 
 function Picker:init()
     self.width, self.height = Screen:getWidth(), Screen:getHeight()
-    self.row_height, self.line_height = Screen:scaleBySize(52), math.max(1, Screen:scaleBySize(1))
+    self.row_height, self.line_height = Screen:scaleBySize(88), math.max(1, Screen:scaleBySize(1))
+    self.page_bar_height = Screen:scaleBySize(48)
     self.dimen = Geom:new{ x = 0, y = 0, w = self.width, h = self.height }
     self.covers_fullscreen = true
     self.title_bar = TitleBar:new{
@@ -71,13 +71,13 @@ function Picker:init()
     }
     self.hint = FrameContainer:new{
         padding = Screen:scaleBySize(10), margin = 0, bordersize = 0,
-        TextWidget:new{ text = _("Arrows expand. Selecting a parent selects its chapters."),
+        TextWidget:new{ text = _("Select chapters. Fetching again replaces their saved thoughts."),
             face = Font:getFace("cfont", 14), fgcolor = BB.COLOR_DARK_GRAY,
             max_width = self.width - Screen:scaleBySize(20) },
     }
     self.actions = self:actionBar()
     local available = self.height - self.title_bar:getHeight() - self.hint:getSize().h
-        - self.row_height - self.line_height - self.actions:getSize().h
+        - self.page_bar_height - self.line_height - self.actions:getSize().h
     self.per_page = math.max(1, math.floor(available / (self.row_height + self.line_height)))
     self.list_height = available
     for index, node in ipairs(self.model:visible()) do
@@ -92,6 +92,21 @@ function Picker:init()
     self:rebuild()
 end
 
+function Picker:edit(node)
+    if not self.on_edit or not node.xpointer then return end
+    self.on_edit(node, function(model)
+        local selected = {}
+        for _, old in ipairs(self.model.nodes) do
+            if old.selected then selected[old.toc_index or old.index] = true end
+        end
+        for _, new in ipairs(model.nodes) do
+            if selected[new.toc_index or new.index] then model:toggle(new) end
+        end
+        self.model = model
+        self:rebuild(model.nodes[node.index], 3)
+    end)
+end
+
 function Picker:rebuild(focus_node, focus_column)
     -- The title and hint are reused; free all previous page widgets before
     -- allocating new ones. No hidden chapter owns a font/gesture/widget tree.
@@ -103,28 +118,38 @@ function Picker:rebuild(focus_node, focus_column)
     self.pages = math.max(1, math.ceil(#visible / self.per_page))
     self.page = math.max(1, math.min(self.page, self.pages))
     local list, focus_rows = VerticalGroup:new{ align = "left" }, {}
-    local side = Screen:scaleBySize(40)
+    local side, status_width = Screen:scaleBySize(44), Screen:scaleBySize(92)
+    local half = math.floor(self.row_height / 2)
     local focus_y = 1
     for index = (self.page - 1) * self.per_page + 1, math.min(#visible, self.page * self.per_page) do
         local node = visible[index]
         local indent = math.min(node.depth, 5) * Screen:scaleBySize(14)
-        local branch = node.last > node.index
-        local arrow = self:button(branch and (node.expanded and "▾" or "▸") or "", side,
-            function() self.model:expand(node); self:rebuild(node, 1) end, { enabled = branch })
         local toggle = function() self.model:toggle(node); self:rebuild(node, 2) end
-        local matched = node.total == 0
-        local status_width = matched and Screen:scaleBySize(62) or 0
-        local title = self:button(node.title or "", self.width - indent - 2 * side - status_width,
-            toggle, { align = "left", text_font_bold = branch or node == self.model.current, enabled = not matched })
-        local mark = matched and "" or node.count == node.total and "✓" or node.count > 0 and "−" or "□"
-        local check = self:button(mark, side, toggle, { text_font_size = 24, enabled = not matched })
-        local row = HorizontalGroup:new{ align = "center", HorizontalSpan:new{ width = indent }, arrow, title }
-        if matched then
-            row[#row + 1] = self:button(_("Matched"), status_width, nil, { text_font_size = 13, enabled = false })
-        end
-        row[#row + 1] = check
+        local content_width = self.width - side - indent - status_width
+        local title = self:button(node.title, content_width, toggle, {
+            height = half, align = "left", text_font_bold = node.branch or node == self.model.current,
+            enabled = node.selectable })
+        local remote = self:button(node.chapter and T(_("WeRead: %1"), node.chapter.title or "")
+            or _("Choose a WeRead chapter first"), content_width, toggle, {
+            height = self.row_height - half, align = "left", text_font_size = 14,
+            enabled = node.selectable })
+        local check = self:button(node.selected and "✓" or "□", side, toggle,
+            { text_font_size = 24, enabled = node.selectable })
+        local status = node.chapter and (node.fetched and _("Retrieved") or _("Matched")) or _("Unmatched")
+        local label = CenterContainer:new{ dimen = Geom:new{ w = status_width, h = half },
+            FrameContainer:new{ bordersize = 0, margin = 0, padding = Screen:scaleBySize(3),
+                background = node.chapter and BB.COLOR_BLACK or BB.COLOR_WHITE,
+                TextWidget:new{ text = status, face = Font:getFace("cfont", 13),
+                    max_width = status_width - Screen:scaleBySize(6),
+                    fgcolor = node.chapter and BB.COLOR_WHITE or BB.COLOR_DARK_GRAY } } }
+        local edit = self:button(node.chapter and _("Change match") or _("Select match"), status_width,
+            function() self:edit(node) end, { height = self.row_height - half, text_font_size = 16,
+                enabled = self.on_edit ~= nil and node.xpointer ~= nil })
+        local row = HorizontalGroup:new{ align = "center", check, HorizontalSpan:new{ width = indent },
+            VerticalGroup:new{ align = "left", title, remote },
+            VerticalGroup:new{ align = "center", label, edit } }
         list[#list + 1], list[#list + 2] = row, self:line()
-        focus_rows[#focus_rows + 1] = { arrow, title, check }
+        focus_rows[#focus_rows + 1] = { check, title, edit }
         if node == focus_node then focus_y = #focus_rows end
     end
     list[#list + 1] = VerticalSpan:new{ width = math.max(0, self.list_height - list:getSize().h) }
@@ -132,10 +157,12 @@ function Picker:rebuild(focus_node, focus_column)
     -- its own offset before the first paint (and after every page rebuild).
     list:resetLayout()
     local third = math.floor(self.width / 3)
-    local previous = self:button("‹", third, function() self:onPrevPage() end, { enabled = self.page > 1 })
-    local counter = self:button(tostring(self.page) .. " / " .. tostring(self.pages), third, nil, { enabled = false })
+    local previous = self:button("‹", third, function() self:onPrevPage() end,
+        { enabled = self.page > 1, height = self.page_bar_height })
+    local counter = self:button(tostring(self.page) .. " / " .. tostring(self.pages), third, nil,
+        { enabled = false, height = self.page_bar_height })
     local next_page = self:button("›", self.width - third * 2, function() self:onNextPage() end,
-        { enabled = self.page < self.pages })
+        { enabled = self.page < self.pages, height = self.page_bar_height })
     focus_rows[#focus_rows + 1] = { previous, counter, next_page }
     focus_rows[#focus_rows + 1] = self.actions.buttons_layout[1]
     self.layout = focus_rows

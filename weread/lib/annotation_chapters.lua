@@ -147,9 +147,10 @@ end
 
 -- Resolve identity independently of catalog order. Only unique names are
 -- automatic; duplicate names need a unique parent context.
-function Chapters.map(document, catalog, descriptor)
+function Chapters.map(document, catalog, descriptor, overrides)
     local ok, toc = pcall(document.getToc, document)
     toc = ok and type(toc) == "table" and toc or {}
+    local available = catalog
     catalog = descriptor and descriptor.chapters or catalog
     local indexes, counts = { {}, {}, {} }, { {}, {}, {} }
     local function keys(title)
@@ -172,6 +173,20 @@ function Chapters.map(document, catalog, descriptor)
         for n, key in ipairs(keys(chapter.title)) do counts[n][key] = (counts[n][key] or 0) + 1 end
     end
     local chosen, occupied, candidates = {}, {}, {}
+    local by_uid = {}
+    for _, chapter in ipairs(available) do by_uid[Chapters.uid(chapter)] = chapter end
+    -- Saved choices belong to this document's TOC anchors. Reserve them before
+    -- automatic matching, including explicit removals and missing remote UIDs.
+    for index, entry in ipairs(toc) do
+        local uid = overrides and overrides[entry.xpointer]
+        if uid ~= nil then
+            occupied[index] = true
+            if uid ~= false and by_uid[tostring(uid)] and not chosen[tostring(uid)] then
+                uid = tostring(uid)
+                chosen[uid], occupied[index] = index, uid
+            end
+        end
+    end
     for i, chapter in ipairs(catalog) do
         local uid = Chapters.uid(chapter)
         local chapter_keys = keys(chapter.title)
@@ -180,12 +195,14 @@ function Chapters.map(document, catalog, descriptor)
                 candidates[uid] = indexes[n][key]
                 if key ~= "" and not descriptor and #indexes[n][key] == 1 and counts[n][key] == 1 then
                     local target = indexes[n][key][1]
-                    if not occupied[target] then chosen[uid], occupied[target] = target, uid end
+                    if not chosen[uid] and not occupied[target] then
+                        chosen[uid], occupied[target] = target, uid
+                    end
                 end
                 break
             end
         end
-        if descriptor and toc[i] and not occupied[i] then
+        if descriptor and not chosen[uid] and toc[i] and not occupied[i] then
             chosen[uid], occupied[i] = i, uid
         end
     end
@@ -226,6 +243,19 @@ function Chapters.map(document, catalog, descriptor)
             end
         end
         stack[#stack + 1] = i
+    end
+    -- A generated partial EPUB may be manually linked to another chapter of
+    -- the same book. Keep its original descriptor unchanged.
+    if descriptor and overrides then
+        local combined, included = {}, {}
+        for _, chapter in ipairs(catalog) do
+            combined[#combined + 1], included[Chapters.uid(chapter)] = chapter, true
+        end
+        for _, chapter in ipairs(available) do
+            local uid = Chapters.uid(chapter)
+            if chosen[uid] and not included[uid] then combined[#combined + 1] = chapter end
+        end
+        catalog = combined
     end
     local matched, selected, ranges = {}, {}, {}
     for _, chapter in ipairs(catalog) do

@@ -54,7 +54,7 @@ local host = {
     _xpointer_overlay = { setRecords = function(self, records) self.records = records end,
         setEnabled = function() end },
     showInfo = function(_self, message) notices[#notices + 1] = message end,
-    showTransientInfo = function(_self, message) notices[#notices + 1] = message end,
+    showTransientInfo = function() end,
     applyAnnotationVisibility = function() applied = applied + 1 end,
     requireLogin = function() return true end,
     isNetworkConnected = function() return true end,
@@ -170,12 +170,17 @@ assert(calls == 2 and not store:get("book", "source_status", "3").persistence_ve
     "prefetch rebuilt an old completed source automatically")
 context.chapters, context.ranges = { { chapterUid = "3" } }, {}
 store:put("book", "meta", "enabled", true)
-local notices_before_legacy, calls_before_legacy = #notices, calls
-host:onUnifiedAnnotationsReady()
-drain()
-assert(calls == calls_before_legacy and #notices == notices_before_legacy + 1
-    and notices[#notices] == "Thought data format has been upgraded. Match again to download current data.",
-    "opening an old cache did not stay local with a rematch notice")
+    local legacy_notice, calls_before_legacy = nil, calls
+    local original_transient_info = host.showTransientInfo
+    host.showTransientInfo = function(_self, message) legacy_notice = message end
+    host:onUnifiedAnnotationsReady()
+    drain()
+    assert(calls == calls_before_legacy
+        and legacy_notice == "Thought data format has been upgraded. Match again to download current data.",
+        "opening an old cache did not stay local with a rematch notice")
+    host.showTransientInfo = original_transient_info
+    store:put("book", "source", "3", nil)
+    store:put("book", "source_status", "3", nil)
 -- Multi-select keeps source catalog order, including noncontiguous choices.
 context.chapters = { { chapterUid = "1" }, { chapterUid = "2" }, { chapterUid = "3" } }
 local picker_options, chosen

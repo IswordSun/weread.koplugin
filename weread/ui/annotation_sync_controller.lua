@@ -215,6 +215,17 @@ function M:_annotationChapterIndex(context, point)
     return high > 0 and starts[high].index or nil
 end
 
+function M:_currentAnnotationChapter(context)
+    if not context or #context.chapters == 0 then return nil end
+    local document = self.ui and self.ui.document
+    if document and type(document.getXPointer) == "function" then
+        local ok, point = pcall(document.getXPointer, document)
+        local index = ok and self:_annotationChapterIndex(context, point)
+        if index and context.chapters[index] then return context.chapters[index] end
+    end
+    return context.chapters[1]
+end
+
 function M:_refreshAnnotationOverlay()
     local context, overlay = self._annotation_context, self._xpointer_overlay
     if not context or not overlay or overlay.enabled == false then return end
@@ -590,6 +601,15 @@ function M:startUnifiedAnnotationSync(options)
             self:showInfo(_("No matching chapters found. Check the bound book and local chapter titles."))
             return
         end
+        local chapters = options.chapters
+        if not chapters then
+            local current = self:_currentAnnotationChapter(context)
+            chapters = current and { current } or {}
+        end
+        if #chapters == 0 then
+            self:showInfo(_("No matching chapters found. Check the bound book and local chapter titles."))
+            return
+        end
         context.store:put(context.book_id, "meta", "enabled", true)
         context.store:put(context.book_id, "manual_only", context.document_key, nil)
         local cache = self.settings:get("cache")
@@ -597,7 +617,10 @@ function M:startUnifiedAnnotationSync(options)
         self.settings:set("cache", cache)
         self.settings:flush()
         if self._xpointer_overlay then self._xpointer_overlay:setEnabled(true) end
-        self:_runAnnotationJob(context, options)
+        local job_options = {}
+        for key, value in pairs(options) do job_options[key] = value end
+        job_options.chapters = chapters
+        self:_runAnnotationJob(context, job_options)
     end
     if options.offline then return start() end
     if not self:requireLogin(true, true) then return end
@@ -621,7 +644,7 @@ function M:ensureAnnotationDisplay()
     if summary and summary.chapters > 0 then return false end
     local ConfirmBox = require("ui/widget/confirmbox")
     UIManager:show(ConfirmBox:new{
-        text = T(_("Match underlines and thoughts for “%1”?\nOnly chapters in this file are processed. Automatic downloads require both chapter prefetch and annotation prefetch; position matching is always manual."), binding.title or binding.book_id),
+        text = T(_("Match underlines and thoughts for “%1”?\nOnly the current chapter is processed. Choose chapters to match more."), binding.title or binding.book_id),
         ok_text = _("Start matching"), cancel_text = _("Later"),
         ok_callback = function()
             local cache = self.settings:get("cache")
@@ -842,13 +865,7 @@ function M:getUnifiedAnnotationMenuItems()
         { text = binding and T(_("Linked WeRead book: %1"), binding.title or binding.book_id)
                 or _("Match with WeRead book"),
             callback = function(menu) self:bindExternalAnnotationsBook(menu) end },
-        { text_func = function()
-                local context = self._annotation_context
-                if not context then return _("Continue matching") end
-                local summary = self:_annotationSummary(context)
-                return T(_("Continue matching · %1/%2 chapters, %3 underlines"),
-                    tostring(summary.chapters), tostring(#context.chapters), tostring(summary.located))
-            end, text = _("Continue matching"), callback = function()
+        { text = _("Sync current chapter"), callback = function()
             self:startUnifiedAnnotationSync({ offline = not self:isNetworkConnected() }) end },
         { text = _("Choose chapters to match"), callback = function()
             self:chooseAnnotationChapters()

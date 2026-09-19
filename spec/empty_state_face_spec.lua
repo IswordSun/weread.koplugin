@@ -314,7 +314,7 @@ expect(cover_view._item_rows[1]._has_finished_badge == true
         and cover_view._item_rows[2]._has_finished_badge == false,
     "cover bookshelf finished badge did not follow shelf completion state")
 expect(cover_view._item_rows[1]._has_private_badge == true
-        and cover_view._item_rows[1]._private_badge_size == 20
+        and cover_view._item_rows[1]._private_badge_size == 14
         and cover_view._item_rows[2]._has_private_badge == false,
     "cover bookshelf private badge did not follow the private-reading state")
 expect(cover_view._item_rows[1].width == 200

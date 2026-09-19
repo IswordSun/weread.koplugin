@@ -220,7 +220,7 @@ function PrivateReadingBadge:paintTo(bb, x, y)
     local mask_x = math.max(0, math.floor(self.size * 0.083) + 3)
     -- Leave five pixels below the glyph, so the cover's rounded clipping never
     -- removes the mask's lower edge.
-    local mask_y = math.max(0, self.size - mask_height - 6)
+    local mask_y = math.max(0, self.size - mask_height - 8)
     self:_paint_mask(bb, x + mask_x, y + mask_y, mask_width, mask_height)
     -- Two short slanted eye openings stay legible at e-ink thumbnail scale.
     local eye_y = y + mask_y + math.max(1, math.floor(mask_height * 0.35))

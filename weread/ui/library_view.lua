@@ -180,12 +180,18 @@ function PrivateReadingBadge:_inside_cover(px, py)
         self.card_width, self.card_height, self.card_radius)
 end
 
-function PrivateReadingBadge:_paint_mask_ellipse(bb, x, y, center_x, center_y, radius_x, radius_y)
-    for row = -radius_y, radius_y do
-        local ratio = row / math.max(1, radius_y)
-        local half_width = math.floor(radius_x * math.sqrt(math.max(0, 1 - ratio * ratio)))
-        bb:paintRect(x + center_x - half_width, y + center_y + row,
-            2 * half_width + 1, 1, Blitbuffer.COLOR_WHITE)
+function PrivateReadingBadge:_paint_mask(bb, x, y, width, height)
+    -- Official private-reading glyph: a flat-topped hood that rounds down at
+    -- the cheeks, rather than an oval theatrical mask.
+    local straight_rows = math.max(1, math.floor(height * 0.42))
+    for row = 0, height - 1 do
+        local inset = 0
+        if row >= straight_rows then
+            local curve = row - straight_rows + 1
+            inset = math.min(math.floor((width - 1) / 2), math.floor(curve / 2))
+        end
+        local paint_width = math.max(1, width - 2 * inset)
+        bb:paintRect(x + inset, y + row, paint_width, 1, Blitbuffer.COLOR_WHITE)
     end
 end
 
@@ -198,15 +204,21 @@ function PrivateReadingBadge:paintTo(bb, x, y)
             end
         end
     end
-    local mask_x = math.floor(self.size * 0.30)
-    local mask_y = math.floor(self.size * 0.72)
-    local radius_x = math.max(2, math.floor(self.size * 0.22))
-    local radius_y = math.max(1, math.floor(self.size * 0.14))
-    self:_paint_mask_ellipse(bb, x, y, mask_x, mask_y, radius_x, radius_y)
-    local eye_radius = math.max(1, math.floor(radius_y / 2))
-    local eye_gap = math.max(1, math.floor(radius_x * 0.45))
-    bb:paintCircle(x + mask_x - eye_gap, y + mask_y, eye_radius, Blitbuffer.COLOR_BLACK)
-    bb:paintCircle(x + mask_x + eye_gap, y + mask_y, eye_radius, Blitbuffer.COLOR_BLACK)
+    local mask_width = math.max(7, math.floor(self.size * 0.55))
+    local mask_height = math.max(6, math.floor(self.size * 0.42))
+    local mask_x = math.max(0, math.floor(self.size * 0.10))
+    local mask_y = math.max(0, self.size - mask_height - 1)
+    self:_paint_mask(bb, x + mask_x, y + mask_y, mask_width, mask_height)
+    -- Two short slanted eye openings stay legible at e-ink thumbnail scale.
+    local eye_y = y + mask_y + math.max(1, math.floor(mask_height * 0.35))
+    local eye_width = math.max(2, math.floor(mask_width * 0.20))
+    local left_eye_x = x + mask_x + math.max(1, math.floor(mask_width * 0.20))
+    local right_eye_x = x + mask_x + mask_width - eye_width
+        - math.max(1, math.floor(mask_width * 0.20))
+    bb:paintRect(left_eye_x, eye_y, eye_width, 1, Blitbuffer.COLOR_BLACK)
+    bb:paintRect(left_eye_x + 1, eye_y + 1, math.max(1, eye_width - 1), 1, Blitbuffer.COLOR_BLACK)
+    bb:paintRect(right_eye_x, eye_y + 1, math.max(1, eye_width - 1), 1, Blitbuffer.COLOR_BLACK)
+    bb:paintRect(right_eye_x + 1, eye_y, eye_width, 1, Blitbuffer.COLOR_BLACK)
 end
 
 local function is_private_book(book)
@@ -476,7 +488,7 @@ function CoverCell:init()
     self._has_private_badge = self._private_reading
     if self._private_reading then
         local badge_size = math.max(1, math.min(metrics.card_width, metrics.card_height,
-            Screen:scaleBySize(22)))
+            Screen:scaleBySize(28)))
         local badge = PrivateReadingBadge:new{
             size = badge_size,
             card_width = metrics.card_width,

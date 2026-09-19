@@ -186,7 +186,11 @@ function CoverCell:init()
                 file = self.cover_path,
                 width = image_width,
                 height = image_height,
-                scale_factor = 0,
+                -- The card itself is sized to a standard portrait cover ratio,
+                -- so stretching makes the artwork meet the single border with
+                -- no letterboxing while keeping distortion imperceptible for
+                -- normal book-cover thumbnails.
+                scale_factor = nil,
                 -- Shelf thumbnails are short-lived page content. Keeping them
                 -- out of KOReader's 8 MiB global image cache also makes corrupt
                 -- or unexpectedly large legacy files unable to crash the UI.
@@ -237,11 +241,11 @@ function CoverCell:init()
     cover_layers[#cover_layers + 1] = cover_card
     local cover = OverlapGroup:new(cover_layers)
     local title = self.book.title or self.book.bookId or self.book.book_id or _("Untitled")
-    local status_size = math.max(1, math.min(metrics.title_height, Screen:scaleBySize(18)))
-    local title_gap = math.max(1, Screen:scaleBySize(4))
+    local status_size = math.max(1, math.min(metrics.title_height, Screen:scaleBySize(10)))
+    local title_gap = math.max(1, Screen:scaleBySize(2))
     local title_widget = TextWidget:new{
         text = title,
-        face = Font:getFace("cfont", 17),
+        face = Font:getFace("cfont", 15),
         max_width = math.max(1, metrics.cover_width - status_size - title_gap),
     }
     self._has_download_status = true

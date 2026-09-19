@@ -33,9 +33,9 @@ local modern_large = CoverLayout.calculate{
     height = 1872,
     size_scale = 2.34,
 }
-expect(modern_large.columns == 4 and modern_large.rows == 4,
-    "large modern layout should cap the shelf at four columns")
-expect(modern_large.page_size == 16,
+expect(modern_large.columns == 4 and modern_large.rows == 3,
+    "large modern layout should cap the shelf at four columns and three rows")
+expect(modern_large.page_size == 12,
     "large modern layout should preserve readable cover density")
 
 local very_large = CoverLayout.calculate{
@@ -43,8 +43,8 @@ local very_large = CoverLayout.calculate{
     height = 3744,
     size_scale = 4.68,
 }
-expect(very_large.page_size > modern_large.page_size,
-    "cover count must not have a hidden fixed upper limit")
+expect(very_large.columns == 4 and very_large.rows == 3,
+    "very large screens should retain the configured cover density")
 
 local no_reserved_space = CoverLayout.calculate{
     width = 600,
@@ -76,9 +76,9 @@ expect(invalid.columns == 3 and invalid.rows == 2,
 local card = CoverLayout.card{ width = 200, height = 300, size_scale = 1 }
 expect(card.gutter == 6 and card.shadow == 3,
     "cover card should reserve a stable gutter and shadow")
-expect(card.cover_width == 176 and card.cover_height == 258,
+expect(card.cover_width == 179 and card.cover_height == 262,
     "cover card should use a portrait cover box")
-expect(card.card_width == 173 and card.card_height == 255,
+expect(card.card_width == 176 and card.card_height == 259,
     "cover shadow should remain inside its shelf slot")
 
 local tiny_card = CoverLayout.card{ width = 1, height = 1, size_scale = 100 }

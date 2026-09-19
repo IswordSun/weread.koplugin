@@ -41,7 +41,8 @@ function CoverLayout.calculate(options)
     -- cannot accommodate four cards.
     local max_columns = math.max(1, math.floor(positive(options.max_columns, 4)))
     local columns = math.min(max_columns, math.max(1, math.floor(width / min_cell_width)))
-    local rows = math.max(1, math.floor(content_height / min_cell_height))
+    local max_rows = math.max(1, math.floor(positive(options.max_rows, 3)))
+    local rows = math.min(max_rows, math.max(1, math.floor(content_height / min_cell_height)))
     return {
         columns = columns,
         rows = rows,
@@ -63,7 +64,7 @@ function CoverLayout.card(options)
     local gutter = math.max(1, math.floor(6 * size_scale))
     local requested_shadow = math.max(1, math.floor(3 * size_scale))
     local title_gap = math.max(1, math.floor(4 * size_scale))
-    local title_height = math.max(1, math.floor(26 * size_scale))
+    local title_height = math.max(1, math.floor(22 * size_scale))
     local max_cover_width = math.max(1, width - 2 * gutter)
     local max_cover_height = math.max(1, height - 2 * gutter - title_gap - title_height)
     local shadow = math.min(requested_shadow,

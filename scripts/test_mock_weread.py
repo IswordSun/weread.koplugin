@@ -68,8 +68,12 @@ class MockTests(unittest.TestCase):
     def test_annotations_and_progress_write_read(self):
         _, result = self.gateway("/book/underlines", bookId=BOOK_ID, chapterUid=2)
         mark = result["underlines"][0]
+        self.assertIn("metadata", mark)
+        self.assertIsNone(mark["metadata"])
         _, thoughts = self.gateway("/book/readreviews", bookId=BOOK_ID, chapterUid=2, reviews=[dict(range=mark["range"])])
         self.assertEqual(thoughts["reviews"][0]["range"], mark["range"])
+        self.assertIn("metadata", thoughts["reviews"][0])
+        self.assertIsNone(thoughts["reviews"][0]["metadata"])
         self.assertGreater(len(thoughts["reviews"][0]["pageReviews"][0]["review"]["content"]), 100)
         self.request("/web/book/read", dict(b=weread_e(BOOK_ID), c=weread_e(2), ci=2, co=120, pr=25))
         _, progress = self.gateway("/book/getprogress", bookId=BOOK_ID)

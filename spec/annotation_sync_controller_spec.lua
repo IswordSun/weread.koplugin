@@ -548,7 +548,7 @@ do
     local function start(uid, options)
         context = { path = "single", book_id = "cancel", document_key = "cancel-key", store = store,
             binding = { book_id = "cancel", title = "Cancel" }, statuses = {},
-            chapters = { { chapterUid = uid } }, ranges = {} }
+            chapters = type(uid) == "table" and uid or { { chapterUid = uid } }, ranges = {} }
         host._annotation_context = context
         host:_runAnnotationJob(context, options)
         local request = host._external_annotation_sync
@@ -622,6 +622,26 @@ do
     start("launch-failure")
     assert(not pending and not host._external_annotation_sync and prevented == allowed)
     fail_start = false
+
+    -- A later worker failure must not hide already committed chapters. This
+    -- also covers old downloaded books whose embedded annotations are gated.
+    host._unified_annotations_active = false
+    store:put("cancel", "display", "cancel-key", nil)
+    local partial = { { chapterUid = "partial-1" }, { chapterUid = "partial-2" } }
+    start(partial)
+    context.binding.automatic = true
+    complete_child(); complete_child(); complete_child()
+    assert(pending and store:get("cancel", "status", "cancel-key:partial-1"))
+    assert(host._unified_annotations_active and store:get("cancel", "display", "cancel-key")
+        and #host._xpointer_overlay.records > 0, "completed chapter hidden until the entire job finishes")
+    resume_child(nil); drain()
+    assert(not host._external_annotation_sync and #host._xpointer_overlay.records > 0
+        and store:get("cancel", "source", "partial-1"), "worker failure lost completed chapter")
+    local resumed_from = #requested
+    start(partial)
+    complete_child(); complete_child(); complete_child()
+    assert(not pending and not host._external_annotation_sync and #requested == resumed_from + 3,
+        "resuming refetched the completed chapter")
 
     -- A concurrent login change wins over auth captured by an older worker.
     returned_auth = { cookies = { session = "old-child" } }

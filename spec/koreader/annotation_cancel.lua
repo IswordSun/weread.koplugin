@@ -107,3 +107,31 @@ pump()
 assert(values[1] == false and values[2] == nil and values[3] == "reason\0text")
 assert(not success.progress.dismiss_callback and guards == 0 and host.settings.flush == flush)
 print("Native annotation response: false/nil/binary payload preserved; settings isolated")
+
+-- Use KOReader's real JSON codec, not the SQLite fixture codec above. JSON
+-- null is a function in LuaJSON and cannot cross Trapper's table serializer.
+package.loaded.json, package.preload.json = nil, nil
+local Json = require("json")
+local null = Json.decode("null")
+local payload = string.rep("thought\0\255text", 100000)
+local response_ok, response
+Trapper:wrap(function()
+    response_ok, response = pcall(host._runAnnotationNetwork, host, success, function()
+        local data = Json.decode('{"optional":null,"nested":[null,{"value":null}]}')
+        data.content = payload
+        return true, data
+    end)
+end)
+pump()
+assert(response_ok, tostring(response))
+assert(response[1] == true and response[2].optional == null
+    and response[2].nested[1] == null and response[2].nested[2].value == null
+    and response[2].content == payload and response[3] == nil)
+Trapper:wrap(function()
+    response_ok, response = pcall(host._runAnnotationNetwork, host, success, function()
+        error("fixture child failure")
+    end)
+end)
+pump()
+assert(not response_ok and tostring(response):find("fixture child failure", 1, true))
+print("Native annotation response: nested JSON null, large binary text and child errors preserved")

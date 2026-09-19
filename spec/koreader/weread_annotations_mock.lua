@@ -141,6 +141,8 @@ pump_until(function() return not plugin._external_annotation_sync end)
 assert(annotation_requests() == before_resume + 1, 'manual resume must request only the remaining thoughts batch')
 context = plugin:_prepareAnnotationContext(false)
 assert(context.statuses[store:projectionKey(context.document_key, '2')], 'manual matching did not finish')
+assert(store:get('900001', 'source', '2').underlines[1].metadata == json.decode('null'),
+    'HTTP/worker/SQLite roundtrip lost the JSON null fixture')
 dismiss_info()
 picker = plugin:chooseAnnotationChapters()
 assert(picker.model.by_uid['2'].fetched and picker.model.count == 0)
@@ -203,7 +205,13 @@ for index, uid in ipairs({ 3, 5 }) do
     plugin.settings:set('cache', cache); plugin.settings:flush()
     control { match = '/book/readreviews', delay = 2, times = 0 }
     plugin:prefetchChapterAnnotations(book, chapters[uid])
-    pump_until(function() return store:get('900001', 'download', tostring(uid)) ~= nil end)
+    -- Wait on the worker's progress channel, rather than reopening SQLite
+    -- every UI tick while the child is committing its first checkpoint.
+    pump_until(function()
+        local job = plugin.prefetch_worker.job
+        local state = job and plugin.prefetch_worker:_decode(job.progress_path)
+        return state and state.stage == 'thoughts'
+    end)
     pump_for(0.5)
     plugin:prefetchChapterAnnotations(book, chapters[6])
     assert(plugin._annotation_pending_prefetch)
@@ -249,6 +257,35 @@ shot('07-empty-success-retrieved')
 picker:onClose()
 control { empty_annotations = false }
 print('PASS: selected chapter refetch clears old data; successful empty result remains Retrieved')
+-- A fresh display must activate as soon as its first chapter commits, even
+-- if a later real HTTP request fails and the user resumes it afterward.
+dismiss_info()
+store:put('900001', 'display', context.document_key, nil)
+plugin._unified_annotations_active = false
+plugin:startUnifiedAnnotationSync { chapters = { chapters[1], chapters[2] }, clear_existing = true }
+pump_until(function() return plugin._external_annotation_sync ~= nil end)
+pump_until(function()
+    return store:get('900001', 'status', store:projectionKey(context.document_key, '1')) ~= nil
+end)
+assert(plugin._unified_annotations_active and store:get('900001', 'display', context.document_key),
+    'first completed chapter was not activated before the next network request')
+control { match = '/book/underlines', status = 503, times = -1 }
+pump_until(function() return not plugin._external_annotation_sync end, 25)
+assert(store:get('900001', 'source_status', '1') and not store:get('900001', 'source_status', '2'))
+assert(plugin._unified_annotations_active and store:get('900001', 'display', context.document_key))
+dismiss_info()
+reader.rolling:onGotoPage(1)
+pump_for(0.2)
+assert(#plugin._xpointer_overlay.records > 0, 'later HTTP failure hid completed underline records')
+shot('08-completed-chapter-after-http-failure')
+control { match = '', delay = 0, times = 0 }
+local before_retry = annotation_requests()
+plugin:startUnifiedAnnotationSync { chapters = { chapters[1], chapters[2] } }
+pump_until(function() return plugin._external_annotation_sync ~= nil end)
+pump_until(function() return not plugin._external_annotation_sync end)
+assert(annotation_requests() == before_retry + 2, 'resume refetched the already completed first chapter')
+assert(store:get('900001', 'status', store:projectionKey(context.document_key, '2')))
+print('PASS: later HTTP failure preserves visible completed chapter; resume fetches only the unfinished chapter')
 assert(not plugin:_annotationStore().legacy.busy_timeout_ms, 'child lock timeout leaked into UI')
 assert(UIManager._prevent_standby_count == 0, 'standby guard leaked')
 reader:onClose(); UIManager:quit()

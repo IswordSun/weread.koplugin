@@ -58,7 +58,7 @@ def chapter_html(uid):
 def annotation(uid):
     source = chapter_html(uid)
     start = source.index(QUOTE)
-    return dict(range=f"{start}-{start + len(QUOTE)}", markText=QUOTE, count=12)
+    return dict(range=f"{start}-{start + len(QUOTE)}", markText=QUOTE, count=12, metadata=None)
 
 
 def shards(text, count=3):
@@ -158,7 +158,7 @@ class MockServer(ThreadingHTTPServer):
                 if api == "/book/underlines":
                     return 200, dict(chapterUid=uid, underlines=[] if control["empty_annotations"] else [mark])
                 return 200, dict(reviews=[] if control["empty_annotations"] else [
-                    dict(range=item["range"], pageReviews=[dict(review=review(uid))])
+                    dict(range=item["range"], metadata=None, pageReviews=[dict(review=review(uid))])
                     for item in data.get("reviews", []) if item["range"] == mark["range"]])
         if path.startswith("/web/reader/") and method == "GET":
             encoded = path.rsplit("/", 1)[1].split("k")

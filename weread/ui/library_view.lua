@@ -406,7 +406,14 @@ function CoverCell:init()
     self._has_finished_badge = self._finished
     if self._finished then
         local badge = FinishedBadge:new{}
-        badge.overlap_offset = { math.max(0, metrics.card_width - badge.width), 0 }
+        -- Keep the completion stamp inside the rounded cover silhouette. If it
+        -- touches the outer top-right corner, its square white background
+        -- hides the cover radius and makes the card read as a right angle.
+        local badge_inset = math.max(border, metrics.radius)
+        badge.overlap_offset = {
+            math.max(0, metrics.card_width - badge.width - badge_inset),
+            badge_inset,
+        }
         cover_layers[#cover_layers + 1] = badge
     end
     local cover = OverlapGroup:new(cover_layers)

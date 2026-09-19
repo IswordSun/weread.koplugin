@@ -181,16 +181,20 @@ function PrivateReadingBadge:_inside_cover(px, py)
 end
 
 function PrivateReadingBadge:_paint_mask(bb, x, y, width, height)
-    -- Official private-reading glyph: a flat-topped hood that rounds down at
-    -- the cheeks, rather than an oval theatrical mask.
-    local straight_rows = math.max(1, math.floor(height * 0.42))
+    -- Official private-reading glyph: a flat crown and straight cheeks that
+    -- finish with a shallow rounded chin.  A tapering wedge reads as a clipped
+    -- shape at thumbnail size, so retain the vertical sides through most of it.
+    local straight_rows = math.max(1, math.floor(height * 0.58))
+    local curve_rows = math.max(1, height - straight_rows)
     for row = 0, height - 1 do
         local inset = 0
         if row >= straight_rows then
-            local curve = row - straight_rows + 1
-            inset = math.min(math.floor((width - 1) / 2), math.floor(curve / 2))
+            local curve = (row - straight_rows + 1) / curve_rows
+            local arc = 1 - math.sqrt(math.max(0, 1 - curve * curve))
+            inset = math.min(math.floor((width - 3) / 2),
+                math.floor((width / 2) * arc))
         end
-        local paint_width = math.max(1, width - 2 * inset)
+        local paint_width = math.max(3, width - 2 * inset)
         bb:paintRect(x + inset, y + row, paint_width, 1, Blitbuffer.COLOR_WHITE)
     end
 end
@@ -208,7 +212,7 @@ function PrivateReadingBadge:paintTo(bb, x, y)
     -- shrinking the full pennant previously left too little room for a
     -- recognisable mask.
     local mask_width = math.max(5, math.floor(self.size * 0.34))
-    local mask_height = math.max(5, math.floor(self.size * 0.30))
+    local mask_height = math.max(6, math.floor(self.size * 0.34))
     -- Place the whole hood below the diagonal rather than across it, while
     -- keeping it clear of the rounded lower-left cover corner.
     local mask_x = math.max(0, math.floor(self.size * 0.20))

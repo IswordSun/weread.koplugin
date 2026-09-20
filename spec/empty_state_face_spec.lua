@@ -337,6 +337,25 @@ expect(cover_view._item_rows[1]._has_private_badge == true
         and cover_view._item_rows[2]._has_private_badge == false,
     "cover bookshelf private badge did not follow the private-reading state")
 
+-- Plain Widget wrappers must release their owned content on CloseWidget,
+-- without consuming the event before sibling cards can be closed.
+local closed_wrappers = 0
+local function check_cover_close(widget)
+    local owned = rawget(widget, "inner") or rawget(widget, "label") or rawget(widget, "content")
+    if owned then
+        local original_free, freed = owned.free, 0
+        owned.free = function() freed = freed + 1 end
+        expect(type(widget.onCloseWidget) == "function", "cover wrapper has no close handler")
+        expect(not widget:onCloseWidget(), "cover wrapper consumed the close event")
+        expect(freed == 1, "closing a cover wrapper did not release its content")
+        owned.free = original_free
+        closed_wrappers = closed_wrappers + 1
+    end
+    for _, child in ipairs(widget) do check_cover_close(child) end
+end
+check_cover_close(cover_view._item_rows[1])
+expect(closed_wrappers == 3, "close regression missed the cover, finished badge or title")
+
 -- The private-reading glyph must stay inside the pennant triangle at every
 -- size the shelf can produce; small masks used to spill white pixels onto
 -- the cover artwork beside the pennant's diagonal edge.

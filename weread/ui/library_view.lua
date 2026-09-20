@@ -94,6 +94,9 @@ function RoundedCoverCard:free(...)
     if self.inner and self.inner.free then self.inner:free(...) end
 end
 
+-- Plain Widget wrappers do not forward CloseWidget to their owned content.
+RoundedCoverCard.onCloseWidget = RoundedCoverCard.free
+
 function RoundedCoverCard:_masked_corner_color(px, py)
     if self.shadow_color
         and inside_rounded_rect(px - self.shadow_offset, py - self.shadow_offset,
@@ -160,6 +163,8 @@ end
 function FinishedBadge:free(...)
     if self.label and self.label.free then self.label:free(...) end
 end
+
+FinishedBadge.onCloseWidget = FinishedBadge.free
 
 -- WeRead marks private reading with a black corner pennant and a white mask.
 -- The badge honours the cover's rounded silhouette, so it does not square off
@@ -284,6 +289,8 @@ end
 function LeftAlignedTitle:free(...)
     if self.content and self.content.free then self.content:free(...) end
 end
+
+LeftAlignedTitle.onCloseWidget = LeftAlignedTitle.free
 
 local function build_center_cropped_cover(path, width, height)
     -- Keep image preparation independent from ImageWidget's "fit" and

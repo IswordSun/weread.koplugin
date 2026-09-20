@@ -669,6 +669,20 @@ function M:onUnifiedAnnotationsReady()
     started = perf("annotation_display_state", started)
     self:_refreshAnnotationOverlay()
     started = perf("saved_annotation_overlay", started)
+    local sources = context.store:list(context.book_id, "source_status")
+    local legacy = false
+    for _, chapter in ipairs(context.chapters) do
+        local uid = Chapters.uid(chapter)
+        if sources[uid] and sources[uid].persistence_version
+            ~= require("weread.lib.annotation_sync").PERSISTENCE_VERSION then
+            legacy = true
+            break
+        end
+    end
+    if legacy and type(self.showTransientInfo) == "function" then
+        self:showTransientInfo(
+            _("Thought data format has been upgraded. Match again to download current data."), 3)
+    end
     if self:canPrefetchAnnotations()
         and context.store:get(context.book_id, "meta", "enabled")
         and not context.store:get(context.book_id, "manual_only", context.document_key) then
@@ -677,21 +691,11 @@ function M:onUnifiedAnnotationsReady()
         local pending = {}
         local partials = context.store:list(context.book_id, "download")
         local refreshes = context.store:list(context.book_id, "refresh")
-        local sources = context.store:list(context.book_id, "source_status")
-        local legacy = false
         for _, chapter in ipairs(context.chapters) do
             local uid = Chapters.uid(chapter)
             if partials[uid] or refreshes[uid] then
                 pending[#pending + 1] = chapter
             end
-            if sources[uid] and sources[uid].persistence_version
-                ~= require("weread.lib.annotation_sync").PERSISTENCE_VERSION then
-                legacy = true
-            end
-        end
-        if legacy and type(self.showTransientInfo) == "function" then
-            self:showTransientInfo(
-                _("Thought data format has been upgraded. Match again to download current data."), 3)
         end
         if #context.chapters == 1 and #pending == 0 and context.binding.automatic
             and not context.store:get(context.book_id, "source_status", Chapters.uid(context.chapters[1])) then

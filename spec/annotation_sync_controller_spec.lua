@@ -178,6 +178,16 @@ store:put("book", "meta", "enabled", true)
     assert(calls == calls_before_legacy
         and legacy_notice == "Thought data format has been upgraded. Match again to download current data.",
         "opening an old cache did not stay local with a rematch notice")
+    -- Prefetch defaults to off; the upgrade notice must not depend on it.
+    host:setAnnotationPrefetchEnabled(false)
+    legacy_notice = nil
+    local calls_before_off_notice = calls
+    host:onUnifiedAnnotationsReady()
+    drain()
+    assert(calls == calls_before_off_notice
+        and legacy_notice == "Thought data format has been upgraded. Match again to download current data.",
+        "opening an old cache with prefetch disabled did not show the rematch notice")
+    host:setAnnotationPrefetchEnabled(true)
     host.showTransientInfo = original_transient_info
     store:put("book", "source", "3", nil)
     store:put("book", "source_status", "3", nil)

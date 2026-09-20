@@ -52,6 +52,7 @@ local host = {
         end },
     settings = { get = function() return cache end, set = function() end, flush = function() end },
     _xpointer_overlay = { setRecords = function(self, records) self.records = records end,
+        clearAnnotationState = function(self) self:setRecords({}) end,
         setEnabled = function() end },
     showInfo = function(_self, message) notices[#notices + 1] = message end,
     showTransientInfo = function() end,
@@ -207,7 +208,8 @@ host.ui.document.getXPointer = function() return "1200" end
 synced_chapters = nil
 local notices_before_gap = #notices
 host:startUnifiedAnnotationSync({ offline = true })
-assert(synced_chapters == nil and #notices == notices_before_gap + 1,
+assert(synced_chapters == nil and #notices == notices_before_gap + 1
+        and notices[#notices] == "Current position is outside the matched chapters. Use “Choose chapters to match”.",
     "an unmapped reader position silently synced the preceding chapter")
 context.ranges["110"].end_xpointer = nil
 host.ui.document.getXPointer = function() return "1120" end
@@ -314,7 +316,8 @@ do
         _annotationBinding = function() return { book_id = "manual", title = "Manual" } end,
         isNetworkConnected = function() return false end,
         settings = { get = function() return {} end },
-        _xpointer_overlay = { records = {}, setRecords = function(self, records) self.records = records end },
+        _xpointer_overlay = { records = {}, setRecords = function(self, records) self.records = records end,
+            clearAnnotationState = function(self) self:setRecords({}) end },
     }, { __index = host })
     local menu_items, updated_model, closed_menu
     local menu_token = {}

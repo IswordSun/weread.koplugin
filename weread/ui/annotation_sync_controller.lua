@@ -635,7 +635,11 @@ function M:startUnifiedAnnotationSync(options)
         end
         if not chapters then
             local current = self:_currentAnnotationChapter(context)
-            chapters = current and { current } or {}
+            if not current then
+                self:showInfo(_("Current position is outside the matched chapters. Use “Choose chapters to match”."))
+                return
+            end
+            chapters = { current }
         end
         if #chapters == 0 then
             self:showInfo(_("No matching chapters found. Check the bound book and local chapter titles."))
@@ -800,8 +804,7 @@ function M:_saveAnnotationChapterMatch(context, node, uid)
     self._annotation_context = nil
     local updated = self:_prepareAnnotationContext(false)
     if self._xpointer_overlay then
-        self._xpointer_overlay._annotation_window = nil
-        self._xpointer_overlay:setRecords({})
+        self._xpointer_overlay:clearAnnotationState()
     end
     self:_refreshAnnotationOverlay()
     UIManager:setDirty(self.dialog, "ui")

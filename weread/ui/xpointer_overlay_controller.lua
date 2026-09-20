@@ -203,7 +203,7 @@ function M:bindExternalAnnotationsBook(touchmenu_instance)
                                 local cleared, clear_err =
                                     self.external_annotations_db:clearSyncCheckpoint(path)
                                 if not cleared then error(clear_err) end
-                                if self._xpointer_overlay then self._xpointer_overlay:setRecords({}) end
+                                if self._xpointer_overlay then self._xpointer_overlay:clearAnnotationState() end
                                 if touchmenu_instance
                                     and type(touchmenu_instance.updateItems) == "function" then
                                     touchmenu_instance:updateItems()
@@ -211,12 +211,12 @@ function M:bindExternalAnnotationsBook(touchmenu_instance)
                                 local ConfirmBox = require("ui/widget/confirmbox")
                                 UIManager:show(ConfirmBox:new{
                                     title = _("Local book matched"),
-                                    text = T(_("Matched with “%1”.\n\nSync underlines and thoughts now?\n\nYou can cancel at any time. Downloaded progress is saved and resumed automatically next time."),
+                                    text = T(_("Matched with “%1”.\n\nSync underlines and thoughts now?\n\nYou can cancel at any time. Saved progress resumes when you choose Continue matching."),
                                         book.title ~= "" and book.title or book.book_id),
                                     ok_text = _("Sync underlines and thoughts"),
                                     cancel_text = _("Later"),
                                     ok_callback = function()
-                                        self:syncExternalAnnotations()
+                                        self:syncExternalAnnotations({ all_chapters = true })
                                     end,
                                 })
                             end,

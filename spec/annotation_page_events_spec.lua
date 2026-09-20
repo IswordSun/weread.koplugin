@@ -69,6 +69,13 @@ assert(overlay.generation == generation and overlay.cache.marker, "ordinary turn
 overlay.enabled = false; page = 101; comparisons = 0; host:onPageUpdate()
 assert(reads == before and comparisons == 0, "hidden overlay performed unnecessary work")
 overlay.enabled = true; host:_refreshAnnotationOverlay(); assert(loaded() == "9,10,11")
+-- Clearing annotation state must also drop the window/refresh markers: the
+-- next same-page refresh has to rebuild instead of trusting a stale window.
+before = reads
+overlay:clearAnnotationState()
+host:onPageUpdate()
+assert(loaded() == "9,10,11" and reads == before + 3,
+    "cleared annotation state skipped the same-page annotation rebuild")
 page = 201
 host.ui.document.getPageXPointer = function() return nil end
 before = reads

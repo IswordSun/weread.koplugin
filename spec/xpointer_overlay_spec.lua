@@ -73,6 +73,20 @@ expect(draw_calls == 24 and overlay:hitTest({ x = 20, y = 25 }).id == "visible",
 expect(overlay.cache["1:4"].lines == cached_page.lines,
     "cached page rebuilt its drawing spans during repaint")
 
+-- Clearing annotation state must drop records together with the refresh and
+-- window markers, so a later same-page refresh cannot be skipped by mistake.
+local cleared_overlay = Overlay:new{ records = { { id = "stale", pos0 = "a", pos1 = "b" } } }
+cleared_overlay._annotation_window = "stale-window"
+cleared_overlay._annotation_refresh_context = {}
+cleared_overlay._annotation_refresh_generation = 3
+cleared_overlay._annotation_refresh_page = 4
+cleared_overlay:clearAnnotationState()
+expect(#cleared_overlay.records == 0 and cleared_overlay._annotation_window == nil
+        and cleared_overlay._annotation_refresh_context == nil
+        and cleared_overlay._annotation_refresh_generation == nil
+        and cleared_overlay._annotation_refresh_page == nil,
+    "clearing annotation state left records or refresh markers behind")
+
 -- Unified projections are ordered by their start XPointer. Build the interval
 -- prefix once, then page turns should skip records before/after the page while
 -- still retaining an underline that begins earlier and overlaps this page.
@@ -298,10 +312,17 @@ local bind_host = {
     runOnlineTask = function(_self, _label, callback) callback() end,
     showList = function(_self, _title, items) listed_items = items end,
     showTransientInfo = function() end,
+    _xpointer_overlay = {
+        cleared = 0,
+        clearAnnotationState = function(self) self.cleared = self.cleared + 1 end,
+    },
 }
 for name, method in pairs(Controller) do bind_host[name] = method end
-local sync_calls = 0
-bind_host.syncExternalAnnotations = function() sync_calls = sync_calls + 1 end
+local sync_calls, sync_options = 0, nil
+bind_host.syncExternalAnnotations = function(_self, options)
+    sync_calls = sync_calls + 1
+    sync_options = options
+end
 bind_host:bindExternalAnnotationsBook()
 input_options.buttons[1][2].callback()
 listed_items[1].callback()
@@ -309,13 +330,15 @@ expect(saved_document and saved_document.binding.book_id == "book-1",
     "selecting a search result did not persist its binding")
 expect(confirm_options and confirm_options.title == "Local book matched",
     "selecting a search result did not ask whether to sync immediately")
-expect(confirm_options and confirm_options.text:find("resumed automatically", 1, true),
-    "match confirmation did not explain resumable sync")
+expect(confirm_options and confirm_options.text:find("Continue matching", 1, true),
+    "match confirmation did not explain how saved progress resumes")
+expect(bind_host._xpointer_overlay.cleared == 1,
+    "rebinding a book did not clear overlay annotation state")
 expect(sync_calls == 0,
     "annotation sync started before the user confirmed")
 confirm_options.ok_callback()
-expect(sync_calls == 1,
-    "confirming the match did not start annotation sync")
+expect(sync_calls == 1 and sync_options and sync_options.all_chapters == true,
+    "confirming the match did not start a whole-book annotation sync")
 local Unified = require("weread.ui.annotation_sync_controller")
 for name, method in pairs(Unified) do bind_host[name] = method end
 local local_book_items = bind_host:getXPointerOverlayPrototypeMenuItems()

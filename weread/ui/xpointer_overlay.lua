@@ -67,6 +67,14 @@ function Overlay:invalidateLayout()
     self:invalidate()
 end
 
+function Overlay:clearAnnotationState()
+    self._annotation_window = nil
+    self._annotation_refresh_context = nil
+    self._annotation_refresh_generation = nil
+    self._annotation_refresh_page = nil
+    self:setRecords({})
+end
+
 function Overlay:resetLayout()
     self._ordered_prefix_ends = nil
     self:invalidate()

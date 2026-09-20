@@ -576,12 +576,6 @@ function ProgressSync:_pull(options)
         if options.manual then self.notify("authentication_required", {}) end
         return false
     end
-    if options.opening == true then
-        self.on_status("checking_progress", {
-            book_id = context.book_id,
-            position = copy(local_position),
-        })
-    end
     if not self.is_online() then
         self.state = "offline"
         if options.manual then
@@ -590,6 +584,12 @@ function ProgressSync:_pull(options)
             self:_schedule_pull_retry(options, retry_token)
         end
         return false
+    end
+    if options.opening == true then
+        self.on_status("checking_progress", {
+            book_id = context.book_id,
+            position = copy(local_position),
+        })
     end
 
     local generation = self.generation

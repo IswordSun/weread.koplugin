@@ -454,9 +454,14 @@ function M:_runAnnotationJob(context, options)
         reset_legacy = options.reset_legacy,
         offline = options.offline, async_network = request.trapper ~= nil,
         is_online = function() return self:isNetworkConnected() end,
-        on_reset = function()
-            for _, chapter in ipairs(options.chapters or context.chapters) do
-                context.statuses[context.store:projectionKey(context.document_key, Chapters.uid(chapter))] = nil
+        on_reset = function(uid)
+            if uid then
+                context.statuses[context.store:projectionKey(context.document_key, uid)] = nil
+            else
+                for _, chapter in ipairs(options.chapters or context.chapters) do
+                    context.statuses[context.store:projectionKey(context.document_key,
+                        Chapters.uid(chapter))] = nil
+                end
             end
             context.generation = (context.generation or 0) + 1
             self:_refreshAnnotationOverlay()

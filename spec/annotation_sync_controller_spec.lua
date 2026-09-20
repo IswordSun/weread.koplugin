@@ -737,5 +737,48 @@ store.put = function() error("ljsqlite3[busy] database is locked") end
 local ready_ok = pcall(function() host:onUnifiedAnnotationsReady() end)
 store.put = original_put
 assert(ready_ok, "a failed display flag write aborted the reader-ready path")
+
+-- Pausing an explicit legacy rebuild before its first network request must
+-- drop the deleted projection from the in-memory summary and refresh the
+-- overlay: the legacy deletion path only notified the controller for
+-- `clear_existing` before this fix.
+do
+    context = { path = "single", book_id = "legacy-pause", document_key = "single", store = store,
+        binding = { book_id = "legacy-pause", title = "fixture" }, statuses = {},
+        chapters = { { chapterUid = "9" } }, ranges = {}, generation = 1 }
+    host._annotation_context = context
+    local pause_key = store:projectionKey("single", "9")
+    store:put("legacy-pause", "source", "9", {
+        book_id = "legacy-pause", chapter_uid = "9",
+        underlines = { { range = "1-2", markText = "alpha" } },
+        reviews = { { range = "1-2", pageReviews = { { review = { content = "old thought" } } } } },
+    }, "9")
+    store:put("legacy-pause", "source_status", "9", { revision = "legacy", total = 1 }, "9")
+    store:put("legacy-pause", "projection", pause_key,
+        { records = { { range = "1-2", markText = "alpha" } } }, "9")
+    store:put("legacy-pause", "status", pause_key,
+        { revision = "legacy", matcher_version = 1, range_key = "" }, "9")
+    context.statuses[pause_key] = { stats = { total = 1, located = 1 } }
+    host._xpointer_overlay.records = { { range = "1-2", markText = "alpha" } }
+    host._xpointer_overlay._annotation_window = "1:1:1"
+    local calls_before_pause = calls
+    host:startUnifiedAnnotationSync({ offline = false })
+    assert(#scheduled >= 1, "the legacy rebuild scheduled no task callback")
+    table.remove(scheduled, 1)()
+    assert(calls == calls_before_pause,
+        "the paused legacy rebuild contacted the network before its checkpoint")
+    assert(store:get("legacy-pause", "projection", pause_key) == nil,
+        "the legacy projection was not deleted from the store")
+    host:_refreshAnnotationOverlay()
+    local paused_summary = host:_annotationSummary(context)
+    assert(context.statuses[pause_key] == nil
+            and paused_summary.chapters == 0 and paused_summary.located == 0
+            and #host._xpointer_overlay.records == 0,
+        "a paused legacy rebuild left stale statuses or overlay records behind")
+    host:_cancelUnifiedAnnotationSync()
+    drain()
+    assert(prevented == allowed, "standby guard leaked after the paused legacy rebuild")
+end
+
 helper.cleanup()
 print("annotation_sync_controller_spec: consent, completion, cancellation, sessions, prefetch and legacy rebuild passed")

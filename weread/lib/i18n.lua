@@ -508,6 +508,7 @@ local zh = {
     ["Only show downloaded books"] = "仅显示已下载书籍",
     ["Only show not-downloaded books"] = "仅显示未下载书籍",
     ["Finished"] = "已读完",
+    ["Read complete"] = "读完",
     ["Unfinished"] = "未读完",
     ["Downloaded"] = "已下载",
     ["Not downloaded"] = "未下载",

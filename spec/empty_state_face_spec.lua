@@ -41,7 +41,13 @@ end
 local shown = {}
 local has_keys = false
 package.preload["ffi/blitbuffer"] = function()
-    return { COLOR_WHITE = 0, COLOR_BLACK = 1, COLOR_GRAY = 2 }
+    return { COLOR_WHITE = 0, COLOR_BLACK = 1, COLOR_GRAY = 2,
+        gray = function() return 2 end,
+        new = function(width, height, btype)
+            return { blitFrom = function() end, paintRect = function() end,
+                free = function() end, getType = function() return btype end }
+        end,
+    }
 end
 package.preload["ffi/util"] = function()
     return {
@@ -274,6 +280,19 @@ expect(account_view.page_count == 2 and #account_view._item_rows == 2
         and account_view._item_rows[1].text == "Account 11",
     "public-account pagination used the wrong source or slice")
 
+local account_cover_paths = { [accounts[1]] = "/covers/account.jpg" }
+local account_cover_view = LibraryView.show({
+    mode = "public_account", books = books, accounts = accounts,
+    paged = true, page = 1, page_size = 6,
+    cover_mode = true, cover_columns = 3, cover_paths = account_cover_paths,
+}, {})
+expect(account_cover_view.page_count == 2 and #account_cover_view._item_rows == 6
+        and #account_cover_view._focus_item_rows == 2
+        and account_cover_view._item_rows[1]._has_cover == true
+        and account_cover_view._item_rows[1]._cover_fit == "contain"
+        and account_cover_view._item_rows[1]._has_download_status == false,
+    "public-account cover mode did not reuse the book-cover grid safely")
+
 local large_shelf = {}
 for index = 1, 1000 do
     large_shelf[index] = { bookId = tostring(index), title = "Book " .. tostring(index) }
@@ -286,6 +305,8 @@ expect(large_view.page_count == 100 and #large_view._item_rows == 10,
     "large bookshelf created more than one page of row widgets")
 
 books[1]._cached = true
+books[1].finishReading = "1"
+books[1].secret = "1"
 local cover_paths = { [books[1]] = "/covers/one.jpg" }
 local cover_view = LibraryView.show({
     mode = "books", books = books, accounts = {},
@@ -303,10 +324,92 @@ expect(cover_view._item_rows[1]._has_cover == true
     "cover bookshelf did not distinguish cached covers from placeholders")
 expect(cover_view._item_rows[1].status == nil,
     "cover bookshelf retained date or cache status metadata")
-expect(cover_view._item_rows[1]._has_cached_corner == true
-        and cover_view._item_rows[1]._cached_corner_size == 16
-        and cover_view._item_rows[2]._has_cached_corner == false,
-    "cover bookshelf cached corner did not follow download state")
+expect(cover_view._item_rows[1]._has_download_status == true
+        and cover_view._item_rows[1]._download_status_checked == true
+        and cover_view._item_rows[2]._has_download_status == false
+        and cover_view._item_rows[2]._download_status_checked == false,
+    "cover bookshelf download status did not follow download state")
+expect(cover_view._item_rows[1]._has_finished_badge == true
+        and cover_view._item_rows[2]._has_finished_badge == false,
+    "cover bookshelf finished badge did not follow shelf completion state")
+expect(cover_view._item_rows[1]._has_private_badge == true
+        and cover_view._item_rows[1]._private_badge_size == 24
+        and cover_view._item_rows[2]._has_private_badge == false,
+    "cover bookshelf private badge did not follow the private-reading state")
+
+-- The private-reading glyph must stay inside the pennant triangle at every
+-- size the shelf can produce; small masks used to spill white pixels onto
+-- the cover artwork beside the pennant's diagonal edge.
+local private_badge = cover_view._item_rows[1]._private_badge
+expect(private_badge and private_badge.size == 24, "private badge fixture missing")
+local painted = {}
+local paint_bb = { paintRect = function(_self, px, py, pw, ph, color)
+    for yy = py, py + ph - 1 do
+        painted[yy] = painted[yy] or {}
+        for xx = px, px + pw - 1 do painted[yy][xx] = color end
+    end
+end }
+private_badge:paintTo(paint_bb, 0, 0)
+local spilled, glyph_pixels = 0, 0
+for yy, row in pairs(painted) do
+    for xx, color in pairs(row) do
+        if color == 0 then glyph_pixels = glyph_pixels + 1 end
+        if xx > yy then spilled = spilled + 1 end
+    end
+end
+expect(glyph_pixels > 0, "private badge painted no glyph")
+expect(spilled == 0, "private badge glyph spilled outside its pennant: " .. spilled .. " px")
+
+-- Cover preparation must scale through KOReader's C (MuPDF) path instead of
+-- the per-pixel Lua scaler, and a coverless card must keep its placeholder
+-- centered like the pre-grid layout did.
+local scale_calls, lua_scale_calls = 0, 0
+local function fake_image(w, h)
+    return {
+        getWidth = function() return w end,
+        getHeight = function() return h end,
+        getType = function() return "fake-color8" end,
+        free = function() end,
+        scale = function(_self, nw, nh)
+            lua_scale_calls = lua_scale_calls + 1
+            return fake_image(nw, nh)
+        end,
+    }
+end
+package.preload["ui/renderimage"] = function()
+    return {
+        renderImageFile = function() return fake_image(300, 450) end,
+        scaleBlitBuffer = function(_self, _bb, w, h)
+            scale_calls = scale_calls + 1
+            return fake_image(w, h)
+        end,
+    }
+end
+local scaled_books = { { bookId = "scaled", title = "Scaled" } }
+local scaled_view = LibraryView.show({
+    mode = "books", books = scaled_books, accounts = {},
+    paged = true, page = 1, page_size = 6,
+    cover_mode = true, cover_columns = 3,
+    cover_paths = { [scaled_books[1]] = "/covers/scaled.jpg" },
+}, {})
+expect(scaled_view._item_rows[1]._has_cover == true,
+    "mocked cover pipeline did not produce a cover widget")
+expect(scale_calls > 0 and lua_scale_calls == 0,
+    "cover preparation used the per-pixel Lua scaler: lua=" .. lua_scale_calls
+        .. " c=" .. scale_calls)
+local mp_accounts = { { bookId = "MP_WXS_scaled", title = "Account",
+    cover = "http://wx.qlogo.cn/avatar" } }
+local mp_scale_before = scale_calls
+LibraryView.show({
+    mode = "public_account", books = {}, accounts = mp_accounts,
+    paged = true, page = 1, page_size = 6,
+    cover_mode = true, cover_columns = 3,
+    cover_paths = { [mp_accounts[1]] = "/covers/mp.jpg" },
+}, {})
+expect(scale_calls > mp_scale_before,
+    "contained avatar preparation used the per-pixel Lua scaler")
+expect(cover_view._item_rows[2]._placeholder_centered == true,
+    "coverless card did not center its placeholder text")
 expect(cover_view._item_rows[1].width == 200
         and cover_view._item_rows[3].width == 200,
     "cover bookshelf columns did not fill the complete screen width")
@@ -333,7 +436,7 @@ ok, error_message = pcall(function()
     }, {})
 end)
 expect(ok, "empty review list failed to build: " .. tostring(error_message))
-expect(#shown == 11, "all bookshelf and empty-state views should be shown")
+expect(#shown == 14, "all bookshelf and empty-state views should be shown")
 
 expect(#paged_view._header_buttons == 5 and paged_view._tab_buttons == nil
         and paged_view._action_primary == nil, "shelf retained its permanent tabs or toolbars")

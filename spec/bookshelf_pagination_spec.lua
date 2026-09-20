@@ -194,14 +194,19 @@ shelf_settings.paginated = false
 shelf_settings.sort_order = "default"
 host.bookMatchesFilters = function() return true end
 host.shelf_regular = shelf
+host.shelf_mp = {
+    { bookId = "MP_WXS_1", title = "Account 1", cover = "http://wx.qlogo.cn/avatar-1" },
+    { bookId = "MP_WXS_2", title = "Account 2", cover = "http://wx.qlogo.cn/avatar-2" },
+}
 host:showShelfView("books", nil, shown[6], {})
 expect(shown[7].data.cover_mode == true and shown[7].data.paged == true,
     "cover view did not enforce lightweight page rendering")
 expect(shown[7].data.page_size == 9,
     "cover view did not limit the current page to nine books")
 host:showShelfView("public_account", nil, shown[7], {})
-expect(shown[8].data.cover_mode == false and shown[8].data.paged == false,
-    "cover preference changed the public-account list")
+expect(shown[8].data.cover_mode == true and shown[8].data.paged == true
+        and shown[8].data.page_size == 9,
+    "public-account shelf did not adopt the shared cover preference")
 
 local cover_requests = {}
 for index = 1, 12 do shelf[index].cover = "https://cdn.example/" .. tostring(index) end
@@ -239,6 +244,17 @@ host:fetchVisibleShelfCovers(unsafe_view, {
 }, {})
 expect(#cover_requests == requests_before_unsafe_url,
     "cover loader accepted a non-HTTPS cover source")
+
+local requests_before_qlogo = #cover_requests
+local qlogo_view = { page = 1, page_size = 1 }
+host.shelf_view = qlogo_view
+host.shelf_cover_generation = host.shelf_cover_generation + 1
+host:fetchVisibleShelfCovers(qlogo_view, {
+    { bookId = "MP_WXS_avatar", cover = "http://wx.qlogo.cn/avatar" },
+}, {})
+expect(#cover_requests == requests_before_qlogo + 1
+        and cover_requests[#cover_requests].url == "https://wx.qlogo.cn/avatar",
+    "public-account avatar cover was not upgraded to HTTPS and fetched")
 
 -- Groups are projected once per snapshot and share the existing shelf records.
 local grouped_books = {}

@@ -33,22 +33,350 @@ local icons_dir = debug.getinfo(1, "S").source:match("^@(.*/)") .. "../../icons/
 
 local function _(text) return I18n.tr(text) end
 
-local CachedCorner = Widget:extend{
-    size = 0,
+local CoverShadow = Widget:extend{
+    width = 1,
+    height = 1,
+    radius = 1,
 }
 
-function CachedCorner:init()
+function CoverShadow:init()
+    self.width = math.max(1, math.floor(tonumber(self.width) or 1))
+    self.height = math.max(1, math.floor(tonumber(self.height) or 1))
+    self.radius = math.max(1, math.floor(tonumber(self.radius) or 1))
+    self.dimen = Geom:new{ w = self.width, h = self.height }
+end
+
+function CoverShadow:paintTo(bb, x, y)
+    bb:paintRoundedRect(x, y, self.width, self.height, Blitbuffer.gray(0.5), self.radius)
+end
+
+local function inside_rounded_rect(px, py, width, height, radius)
+    if px < 0 or py < 0 or px >= width or py >= height then return false end
+    if radius <= 0 then return true end
+    local center_x, center_y
+    if px < radius and py < radius then
+        center_x, center_y = radius, radius
+    elseif px >= width - radius and py < radius then
+        center_x, center_y = width - radius - 1, radius
+    elseif px < radius and py >= height - radius then
+        center_x, center_y = radius, height - radius - 1
+    elseif px >= width - radius and py >= height - radius then
+        center_x, center_y = width - radius - 1, height - radius - 1
+    else
+        return true
+    end
+    local delta_x, delta_y = px - center_x, py - center_y
+    return delta_x * delta_x + delta_y * delta_y <= radius * radius
+end
+
+-- FrameContainer does not clip its child to its radius. This card masks the
+-- four image corners before painting one anti-aliased border, so the cover,
+-- border, and drop shadow all share the same smooth geometry.
+local RoundedCoverCard = Widget:extend{
+    inner = nil,
+    width = 1,
+    height = 1,
+    radius = 0,
+    border_size = 0,
+    shadow_offset = 0,
+    shadow_color = nil,
+}
+
+function RoundedCoverCard:init()
+    self.width = math.max(1, math.floor(tonumber(self.width) or 1))
+    self.height = math.max(1, math.floor(tonumber(self.height) or 1))
+    self.radius = math.max(0, math.floor(tonumber(self.radius) or 0))
+    self.border_size = math.max(0, math.floor(tonumber(self.border_size) or 0))
+    self.dimen = Geom:new{ w = self.width, h = self.height }
+end
+
+function RoundedCoverCard:free(...)
+    if self.inner and self.inner.free then self.inner:free(...) end
+end
+
+function RoundedCoverCard:_masked_corner_color(px, py)
+    if self.shadow_color
+        and inside_rounded_rect(px - self.shadow_offset, py - self.shadow_offset,
+            self.width, self.height, self.radius) then
+        return self.shadow_color
+    end
+    return Blitbuffer.COLOR_WHITE
+end
+
+function RoundedCoverCard:paintTo(bb, x, y)
+    if self.inner then self.inner:paintTo(bb, x + self.border_size, y + self.border_size) end
+    local radius = self.radius
+    if radius > 0 then
+        for dy = 0, radius - 1 do
+            for dx = 0, radius - 1 do
+                local corners = {
+                    { dx, dy },
+                    { self.width - 1 - dx, dy },
+                    { dx, self.height - 1 - dy },
+                    { self.width - 1 - dx, self.height - 1 - dy },
+                }
+                for _, point in ipairs(corners) do
+                    if not inside_rounded_rect(point[1], point[2], self.width, self.height, radius) then
+                        bb:paintRect(x + point[1], y + point[2], 1, 1,
+                            self:_masked_corner_color(point[1], point[2]))
+                    end
+                end
+            end
+        end
+    end
+    if self.border_size > 0 then
+        bb:paintBorder(x, y, self.width, self.height, self.border_size,
+            Blitbuffer.COLOR_BLACK, radius, true)
+    end
+end
+
+local FinishedBadge = Widget:extend{}
+
+function FinishedBadge:init()
+    self.label = TextWidget:new{
+        text = _("Read complete"),
+        face = Font:getFace("cfont", 9),
+    }
+    -- Chinese glyphs occupy their line box unevenly. Use separate horizontal
+    -- and vertical padding so the visible whitespace around “读完” is balanced.
+    self.padding_x = math.max(1, Screen:scaleBySize(2))
+    self.padding_y = 1
+    local label_size = self.label:getSize()
+    self.width = math.max(Screen:scaleBySize(20), label_size.w + 2 * self.padding_x)
+    self.height = label_size.h + 2 * self.padding_y
+    self.dimen = Geom:new{ w = self.width, h = self.height }
+end
+
+function FinishedBadge:paintTo(bb, x, y)
+    bb:paintRect(x, y, self.width, self.height, Blitbuffer.COLOR_WHITE)
+    bb:paintBorder(x, y, self.width, self.height, Size.border.thin,
+        Blitbuffer.COLOR_BLACK, 0, true)
+    local label_size = self.label:getSize()
+    self.label:paintTo(bb,
+        x + math.floor((self.width - label_size.w) / 2),
+        y + math.floor((self.height - label_size.h) / 2))
+end
+
+function FinishedBadge:free(...)
+    if self.label and self.label.free then self.label:free(...) end
+end
+
+-- WeRead marks private reading with a black corner pennant and a white mask.
+-- The badge honours the cover's rounded silhouette, so it does not square off
+-- the lower-left corner while reproducing the official visual language.
+local PrivateReadingBadge = Widget:extend{
+    size = 1,
+    card_width = 1,
+    card_height = 1,
+    card_radius = 0,
+    card_offset_x = 0,
+    card_offset_y = 0,
+}
+
+function PrivateReadingBadge:init()
     self.size = math.max(1, math.floor(tonumber(self.size) or 1))
     self.dimen = Geom:new{ w = self.size, h = self.size }
 end
 
-function CachedCorner:paintTo(bb, x, y)
-    -- A compact, solid dog-ear in the upper-right corner. Drawing it one
-    -- scanline at a time keeps the marker dependency-free and crisp on e-ink.
-    for row = 0, self.size - 1 do
-        local width = self.size - row
-        bb:paintRect(x + row, y + row, width, 1, Blitbuffer.COLOR_BLACK)
+function PrivateReadingBadge:_inside_cover(px, py)
+    return inside_rounded_rect(self.card_offset_x + px, self.card_offset_y + py,
+        self.card_width, self.card_height, self.card_radius)
+end
+
+-- Paint one horizontal glyph run, clipped to the lower-left pennant triangle:
+-- at badge row `local_y` the pennant only covers columns `0..local_y`, so
+-- smaller badges cannot leave stray glyph pixels on the cover artwork.
+function PrivateReadingBadge:_paint_triangle_run(bb, origin_x, origin_y, local_x, local_y, width, color)
+    local stop_x = math.min(local_x + width - 1, local_y)
+    if stop_x < local_x then return end
+    bb:paintRect(origin_x + local_x, origin_y + local_y, stop_x - local_x + 1, 1, color)
+end
+
+function PrivateReadingBadge:_paint_mask(bb, origin_x, origin_y, mask_x, mask_y, width, height)
+    -- Official private-reading glyph: a flat crown and straight cheeks that
+    -- finish with a shallow rounded chin.  A tapering wedge reads as a clipped
+    -- shape at thumbnail size, so retain the vertical sides through most of it.
+    local straight_rows = math.max(1, math.floor(height * 0.58))
+    local curve_rows = math.max(1, height - straight_rows)
+    for row = 0, height - 1 do
+        local inset = 0
+        if row >= straight_rows then
+            local curve = (row - straight_rows + 1) / curve_rows
+            local arc = 1 - math.sqrt(math.max(0, 1 - curve * curve))
+            inset = math.min(math.floor((width - 3) / 2),
+                math.floor((width / 2) * arc))
+        end
+        self:_paint_triangle_run(bb, origin_x, origin_y, mask_x + inset, mask_y + row,
+            math.max(3, width - 2 * inset), Blitbuffer.COLOR_WHITE)
     end
+end
+
+function PrivateReadingBadge:paintTo(bb, x, y)
+    -- The lower-left right triangle, clipped against the cover's corner arc.
+    for row = 0, self.size - 1 do
+        for column = 0, row do
+            if self:_inside_cover(column, row) then
+                bb:paintRect(x + column, y + row, 1, 1, Blitbuffer.COLOR_BLACK)
+            end
+        end
+    end
+    -- The corner pennant and its glyph intentionally use separate scales:
+    -- shrinking the full pennant previously left too little room for a
+    -- recognisable mask.
+    local mask_width = math.max(5, math.floor(self.size * 0.28))
+    local mask_height = math.max(6, math.floor(self.size * 0.34))
+    -- Place the whole hood below the diagonal rather than across it, while
+    -- keeping it clear of the rounded lower-left cover corner.
+    -- The visual centre of a lower-left right triangle is offset left and up
+    -- from its bounding-box centre.
+    local mask_x = math.max(0, math.floor(self.size * 0.083) + 3)
+    -- Leave five pixels below the glyph, so the cover's rounded clipping never
+    -- removes the mask's lower edge.
+    local mask_y = math.max(0, self.size - mask_height - 8)
+    self:_paint_mask(bb, x, y, mask_x, mask_y, mask_width, mask_height)
+    -- Two short slanted eye openings stay legible at e-ink thumbnail scale.
+    local eye_y = mask_y + math.max(1, math.floor(mask_height * 0.35))
+    local eye_width = math.max(2, math.floor(mask_width * 0.20))
+    local left_eye_x = mask_x + math.max(1, math.floor(mask_width * 0.20))
+    local right_eye_x = mask_x + mask_width - eye_width
+        - math.max(1, math.floor(mask_width * 0.20))
+    self:_paint_triangle_run(bb, x, y, left_eye_x, eye_y, eye_width, Blitbuffer.COLOR_BLACK)
+    self:_paint_triangle_run(bb, x, y, left_eye_x + 1, eye_y + 1,
+        math.max(1, eye_width - 1), Blitbuffer.COLOR_BLACK)
+    self:_paint_triangle_run(bb, x, y, right_eye_x, eye_y + 1,
+        math.max(1, eye_width - 1), Blitbuffer.COLOR_BLACK)
+    self:_paint_triangle_run(bb, x, y, right_eye_x + 1, eye_y, eye_width, Blitbuffer.COLOR_BLACK)
+end
+
+local function is_private_book(book)
+    local secret = book and book.secret
+    return secret == true or tonumber(secret) == 1
+end
+
+local function is_finished(book)
+    return tonumber(book and book.finishReading) == 1
+end
+
+local DownloadStatus = Widget:extend{
+    size = 1,
+}
+
+-- Keep this small container local: it gives shelf titles a fixed measured
+-- width and an explicit left paint origin without adding a KOReader widget
+-- dependency that is absent from the lightweight Lua test harness.
+local LeftAlignedTitle = Widget:extend{
+    width = 1,
+    height = 1,
+    content = nil,
+}
+
+function LeftAlignedTitle:init()
+    self.width = math.max(1, math.floor(tonumber(self.width) or 1))
+    self.height = math.max(1, math.floor(tonumber(self.height) or 1))
+    self.dimen = Geom:new{ w = self.width, h = self.height }
+end
+
+function LeftAlignedTitle:paintTo(bb, x, y)
+    local content_size = self.content:getSize()
+    self.content:paintTo(bb, x, y + math.floor((self.height - content_size.h) / 2))
+end
+
+function LeftAlignedTitle:free(...)
+    if self.content and self.content.free then self.content:free(...) end
+end
+
+local function build_center_cropped_cover(path, width, height)
+    -- Keep image preparation independent from ImageWidget's "fit" and
+    -- "stretch" modes: neither offers a cover-fill mode for raster files.
+    -- Rendering once, scaling proportionally, and cropping the excess gives
+    -- every thumbnail a uniform frame without distorting its artwork.
+    local ok, cropped = pcall(function()
+        local RenderImage = require("ui/renderimage")
+        local source = RenderImage:renderImageFile(path, false)
+        if not source then return nil end
+        local source_width, source_height = source:getWidth(), source:getHeight()
+        if source_width < 1 or source_height < 1 then
+            source:free()
+            return nil
+        end
+        local crop = CoverLayout.centerCrop(source_width, source_height, width, height)
+        -- Scale through KOReader's MuPDF path: a shelf turn can rebuild a
+        -- dozen covers, and the per-pixel Lua fallback is far too slow for it.
+        local filled = RenderImage:scaleBlitBuffer(source, crop.width, crop.height, true)
+        local output = Blitbuffer.new(width, height, filled:getType())
+        output:blitFrom(filled, 0, 0, crop.offset_x, crop.offset_y, width, height)
+        filled:free()
+        return output
+    end)
+    if ok then return cropped end
+    return nil
+end
+
+-- Public-account covers are typically square profile images. Keep their
+-- proportions and center them on white instead of cropping a portrait card
+-- tightly around an avatar.
+local function build_center_contained_cover(path, width, height, inset)
+    local ok, contained = pcall(function()
+        local RenderImage = require("ui/renderimage")
+        local source = RenderImage:renderImageFile(path, false)
+        if not source then return nil end
+        local source_width, source_height = source:getWidth(), source:getHeight()
+        if source_width < 1 or source_height < 1 then
+            source:free()
+            return nil
+        end
+        inset = math.max(0, math.floor(tonumber(inset) or 0))
+        local available_width = math.max(1, width - 2 * inset)
+        local available_height = math.max(1, height - 2 * inset)
+        local factor = math.min(available_width / source_width, available_height / source_height)
+        local target_width = math.max(1, math.floor(source_width * factor + 0.5))
+        local target_height = math.max(1, math.floor(source_height * factor + 0.5))
+        local scaled = RenderImage:scaleBlitBuffer(source, target_width, target_height, true)
+        local output = Blitbuffer.new(width, height, scaled:getType())
+        output:paintRect(0, 0, width, height, Blitbuffer.COLOR_WHITE)
+        output:blitFrom(scaled,
+            math.floor((width - target_width) / 2),
+            math.floor((height - target_height) / 2),
+            0, 0, target_width, target_height)
+        scaled:free()
+        return output
+    end)
+    if ok then return contained end
+    return nil
+end
+
+function DownloadStatus:init()
+    self.size = math.max(1, math.floor(tonumber(self.size) or 1))
+    self.dimen = Geom:new{ w = self.size, h = self.size }
+end
+
+local function paint_status_line(bb, x1, y1, x2, y2, stroke, color)
+    local steps = math.max(math.abs(x2 - x1), math.abs(y2 - y1), 1)
+    for step = 0, steps do
+        local ratio = step / steps
+        bb:paintRect(
+            math.floor(x1 + (x2 - x1) * ratio),
+            math.floor(y1 + (y2 - y1) * ratio),
+            stroke, stroke, color
+        )
+    end
+end
+
+function DownloadStatus:paintTo(bb, x, y)
+    local stroke = math.max(1, math.floor(self.size / 8))
+    local radius = math.max(1, math.floor((self.size - 1) / 2))
+    local center_x = x + math.floor((self.size - 1) / 2)
+    local center_y = y + math.floor((self.size - 1) / 2)
+    -- paintCircle fills when its stroke width matches its radius.
+    bb:paintCircle(center_x, center_y, radius, Blitbuffer.COLOR_BLACK)
+    paint_status_line(bb,
+        center_x - math.floor(radius * 0.52), center_y,
+        center_x - math.floor(radius * 0.12), center_y + math.floor(radius * 0.42),
+        stroke, Blitbuffer.COLOR_WHITE)
+    paint_status_line(bb,
+        center_x - math.floor(radius * 0.12), center_y + math.floor(radius * 0.42),
+        center_x + math.floor(radius * 0.58), center_y - math.floor(radius * 0.42),
+        stroke, Blitbuffer.COLOR_WHITE)
 end
 
 local ShelfRow = InputContainer:extend{
@@ -127,36 +455,51 @@ local CoverCell = InputContainer:extend{
     height = nil,
     cover_path = nil,
     cover_loading = false,
+    contain_cover = false,
     cached = false,
     callback = nil,
     show_parent = nil,
 }
 
 function CoverCell:init()
-    local padding = Size.padding.small
+    local metrics = CoverLayout.card{
+        width = self.width,
+        height = self.height,
+        size_scale = Screen:scaleBySize(1000) / 1000,
+    }
     local border = Size.border.thin
-    local cover_width = math.max(1, self.width - 2 * padding)
-    local label_height = math.min(
-        math.max(1, math.floor(self.height * 0.35)),
-        Screen:scaleBySize(52)
-    )
-    local cover_height = math.max(1, self.height - label_height)
-    local image_width = math.max(1, cover_width - 2 * padding - 2 * border)
-    local image_height = math.max(1, cover_height - 2 * padding - 2 * border)
+    local image_width = math.max(1, metrics.card_width - 2 * border)
+    local image_height = math.max(1, metrics.card_height - 2 * border)
+    self._cover_fit = self.contain_cover and "contain" or "crop"
     local cover_content
     if self.cover_path then
         local image
         local ok = pcall(function()
-            image = ImageWidget:new{
-                file = self.cover_path,
-                width = image_width,
-                height = image_height,
-                scale_factor = 0,
-                -- Shelf thumbnails are short-lived page content. Keeping them
-                -- out of KOReader's 8 MiB global image cache also makes corrupt
-                -- or unexpectedly large legacy files unable to crash the UI.
-                file_do_cache = false,
-            }
+            local rendered
+            if self.contain_cover then
+                -- Let square avatars fill the card width; the portrait card
+                -- naturally retains its white breathing room above and below.
+                rendered = build_center_contained_cover(self.cover_path, image_width, image_height, 0)
+            else
+                rendered = build_center_cropped_cover(self.cover_path, image_width, image_height)
+            end
+            if rendered then
+                image = ImageWidget:new{
+                    image = rendered,
+                    image_disposable = true,
+                    scale_factor = 1,
+                }
+            else
+                -- Preserve the pre-existing safe fallback when a malformed
+                -- legacy cover cannot be decoded for cropping.
+                image = ImageWidget:new{
+                    file = self.cover_path,
+                    width = image_width,
+                    height = image_height,
+                    scale_factor = nil,
+                    file_do_cache = false,
+                }
+            end
             image:getSize()
         end)
         if ok and image then
@@ -167,50 +510,99 @@ function CoverCell:init()
         end
     end
     if not cover_content then
-        cover_content = TextWidget:new{
-            text = self.cover_loading and _("Cover loading") or _("No cover"),
-            face = Font:getFace("cfont", 18),
-            max_width = image_width,
+        -- Center the placeholder text inside the card, like the pre-grid
+        -- layout did before the rounded card painted its content top-left.
+        cover_content = CenterContainer:new{
+            dimen = Geom:new{ w = image_width, h = image_height },
+            TextWidget:new{
+                text = self.cover_loading and _("Cover loading") or _("No cover"),
+                face = Font:getFace("cfont", 18),
+                max_width = image_width,
+            },
         }
         self._has_cover = false
+        self._placeholder_centered = true
     end
-    local cover_frame = CenterContainer:new{
-        dimen = Geom:new{ w = cover_width, h = cover_height },
-        FrameContainer:new{
-            width = cover_width,
-            height = cover_height,
-            margin = 0,
-            padding = padding,
-            bordersize = border,
-            background = Blitbuffer.COLOR_WHITE,
-            CenterContainer:new{
-                dimen = Geom:new{ w = image_width, h = image_height },
-                cover_content,
-            },
-        },
+    local cover_card = RoundedCoverCard:new{
+        inner = cover_content,
+        width = metrics.card_width,
+        height = metrics.card_height,
+        border_size = border,
+        radius = metrics.radius,
+        shadow_offset = metrics.shadow,
+        shadow_color = metrics.shadow > 0
+            and (Blitbuffer.gray and Blitbuffer.gray(0.5) or Blitbuffer.COLOR_GRAY) or nil,
     }
     local cover_layers = {
-        dimen = Geom:new{ w = cover_width, h = cover_height },
-        cover_frame,
+        dimen = Geom:new{ w = metrics.cover_width, h = metrics.cover_height },
     }
-    self._has_cached_corner = self.cached == true
-    if self._has_cached_corner then
-        local corner_size = math.max(1, math.min(
-            cover_width,
-            cover_height,
-            Screen:scaleBySize(16)
-        ))
-        local corner = CachedCorner:new{ size = corner_size }
-        corner.overlap_offset = { cover_width - corner_size, 0 }
-        cover_layers[#cover_layers + 1] = corner
-        self._cached_corner_size = corner_size
+    if metrics.shadow > 0 then
+        local shadow = CoverShadow:new{
+            width = metrics.card_width,
+            height = metrics.card_height,
+            radius = metrics.radius,
+        }
+        shadow.overlap_offset = { metrics.shadow, metrics.shadow }
+        cover_layers[#cover_layers + 1] = shadow
+    end
+    cover_layers[#cover_layers + 1] = cover_card
+    self._finished = is_finished(self.book)
+    self._has_finished_badge = self._finished
+    if self._finished then
+        local badge = FinishedBadge:new{}
+        -- Keep the completion stamp inside the rounded cover silhouette. If it
+        -- touches the outer top-right corner, its square white background
+        -- hides the cover radius and makes the card read as a right angle.
+        local badge_inset = math.max(border, math.floor(metrics.radius * 0.55))
+        badge.overlap_offset = {
+            math.max(0, metrics.card_width - badge.width - badge_inset),
+            badge_inset,
+        }
+        cover_layers[#cover_layers + 1] = badge
+    end
+    self._private_reading = is_private_book(self.book)
+    self._has_private_badge = self._private_reading
+    if self._private_reading then
+        local badge_size = math.max(1, math.min(metrics.card_width, metrics.card_height,
+            -- Retain the current pennant size; only the inner glyph is tuned.
+            Screen:scaleBySize(24)))
+        local badge = PrivateReadingBadge:new{
+            size = badge_size,
+            card_width = metrics.card_width,
+            card_height = metrics.card_height,
+            card_radius = metrics.radius,
+            card_offset_x = 0,
+            card_offset_y = metrics.card_height - badge_size,
+        }
+        badge.overlap_offset = { 0, metrics.card_height - badge_size }
+        cover_layers[#cover_layers + 1] = badge
+        self._private_badge = badge
+        self._private_badge_size = badge_size
     end
     local cover = OverlapGroup:new(cover_layers)
     local title = self.book.title or self.book.bookId or self.book.book_id or _("Untitled")
+    local status_size = math.max(1, math.min(metrics.title_height, Screen:scaleBySize(10)))
+    local title_gap = math.max(1, Screen:scaleBySize(2))
+    self._has_download_status = self.cached == true
+    self._download_status_checked = self._has_download_status
     local title_widget = TextWidget:new{
         text = title,
-        face = Font:getFace("cfont", 18),
-        max_width = cover_width,
+        face = Font:getFace("cfont", 15),
+        max_width = math.max(1, metrics.cover_width
+            - (self._has_download_status and status_size + title_gap or 0)),
+    }
+    local title_line = HorizontalGroup:new{}
+    if self._has_download_status then
+        title_line[#title_line + 1] = DownloadStatus:new{ size = status_size }
+        title_line[#title_line + 1] = HorizontalSpan:new{ width = title_gap }
+    end
+    title_line[#title_line + 1] = title_widget
+    -- The fixed-width custom container participates in measurement and paints
+    -- all titles from the cover's left edge, even when the title is short.
+    local title_container = LeftAlignedTitle:new{
+        width = metrics.cover_width,
+        height = metrics.title_height,
+        content = title_line,
     }
     self.frame = FrameContainer:new{
         bordersize = 0,
@@ -223,8 +615,15 @@ function CoverCell:init()
             dimen = Geom:new{ w = self.width, h = self.height },
             VerticalGroup:new{
                 align = "center",
-                cover,
-                title_widget,
+                CenterContainer:new{
+                    dimen = Geom:new{ w = metrics.cover_width, h = metrics.cover_height },
+                    cover,
+                },
+                VerticalSpan:new{ width = metrics.title_gap },
+                CenterContainer:new{
+                    dimen = Geom:new{ w = metrics.cover_width, h = metrics.title_height },
+                    title_container,
+                },
             },
         },
     }
@@ -477,7 +876,7 @@ function LibraryView:itemStatus(book)
     local status = ""
     if book.readUpdateTime and book.readUpdateTime > 0 then
         status = os.date("%Y-%m-%d", book.readUpdateTime)
-    elseif book.finishReading == 1 then
+    elseif is_finished(book) then
         status = _("Done")
     end
     if book._cached then
@@ -490,7 +889,7 @@ function LibraryView:preparePagination()
     local source = self.mode == "public_account"
         and (self.accounts or {}) or (self.books or {})
     self.page_size = math.max(1, math.floor(tonumber(self.page_size) or 10))
-    if self.cover_mode and self.mode == "books" then
+    if self.cover_mode then
         local columns = math.max(1, math.floor(tonumber(self.cover_columns) or 3))
         local rows = math.max(1, math.floor(tonumber(self.cover_rows) or 2))
         self.page_size = columns * rows
@@ -528,7 +927,7 @@ function LibraryView:content()
         first = (self.page - 1) * self.page_size + 1
         last = math.min(#source, first + self.page_size - 1)
     end
-    if self.cover_mode and self.mode == "books" then
+    if self.cover_mode then
         local columns = math.max(1, math.floor(tonumber(self.cover_columns) or 3))
         local rows = math.max(1, math.floor(tonumber(self.cover_rows) or 2))
         local cell_width = math.floor(self.content_width / columns)
@@ -558,6 +957,7 @@ function LibraryView:content()
                 cached = book._cached == true,
                 cover_path = self.cover_paths and self.cover_paths[book] or nil,
                 cover_loading = self.cover_loading and self.cover_loading[book] == true,
+                contain_cover = self.mode == "public_account",
                 width = width,
                 height = math.max(1, height),
                 show_parent = self,
@@ -647,7 +1047,7 @@ function LibraryView:init()
     local page_bar = self:pageBar()
     local scroll_h = math.max(1, self.screen_h - header:getSize().h
         - (page_bar and page_bar:getSize().h or 0))
-    if self.cover_mode and self.mode == "books" then
+    if self.cover_mode then
         local rows = math.max(1, math.floor(tonumber(self.cover_rows) or 2))
         self.cover_content_height = scroll_h
         self.cover_cell_height = math.max(1, math.floor(scroll_h / rows))

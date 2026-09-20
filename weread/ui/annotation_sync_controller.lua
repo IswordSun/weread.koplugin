@@ -663,7 +663,13 @@ function M:onUnifiedAnnotationsReady()
     -- Recover partial chapter selections created by older builds that wrote a
     -- projection but waited for the whole document before marking it usable.
     if self:_annotationSummary(context).located > 0 then
-        context.store:put(context.book_id, "display", context.document_key, true)
+        -- Best effort: a cancelled prefetch worker may still hold the store's
+        -- write lock, and a failed flag write must not abort the reader-ready
+        -- path.
+        local marked, mark_err = pcall(function()
+            context.store:put(context.book_id, "display", context.document_key, true)
+        end)
+        if not marked then logger.warn("annotation display flag:", mark_err) end
     end
     self._unified_annotations_active = self:_usesUnifiedAnnotations()
     started = perf("annotation_display_state", started)

@@ -725,5 +725,17 @@ assert(calls > calls_before_explicit_sync
         and rebuilt_legacy_source and #(rebuilt_legacy_source.reviews or {}) == 0
         and store:get("legacy-sync", "source_status", "9").persistence_version == legacy_persistence_version,
     "an explicit sync did not rebuild the legacy chapter with bounded persistence")
+
+-- A store busy with a cancelled prefetch worker finishing its last write must
+-- not abort the reader-ready path: the display flag write is best effort.
+host:setAnnotationPrefetchEnabled(false)
+context.statuses = {
+    [store:projectionKey(context.document_key, "9")] = { stats = { total = 1, located = 1 } },
+}
+local original_put = store.put
+store.put = function() error("ljsqlite3[busy] database is locked") end
+local ready_ok = pcall(function() host:onUnifiedAnnotationsReady() end)
+store.put = original_put
+assert(ready_ok, "a failed display flag write aborted the reader-ready path")
 helper.cleanup()
 print("annotation_sync_controller_spec: consent, completion, cancellation, sessions, prefetch and legacy rebuild passed")

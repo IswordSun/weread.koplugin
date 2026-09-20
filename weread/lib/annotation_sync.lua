@@ -144,6 +144,11 @@ function Sync:run()
                 { kind = "status", uid = uid },
             })
             source_status = nil
+            -- These rows are what the reader is currently displaying. Notify
+            -- the UI for this chapter only: pausing or failing before the
+            -- rebuild's first network request must not leave stale overlay
+            -- records or completed-chapter statistics behind.
+            if self.on_reset then self.on_reset(uid) end
         end
         if source_status and not refreshing then
             local status = self.document_key and store:get(book_id, "status",

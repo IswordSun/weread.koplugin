@@ -274,6 +274,18 @@ expect(account_view.page_count == 2 and #account_view._item_rows == 2
         and account_view._item_rows[1].text == "Account 11",
     "public-account pagination used the wrong source or slice")
 
+local account_cover_paths = { [accounts[1]] = "/covers/account.jpg" }
+local account_cover_view = LibraryView.show({
+    mode = "public_account", books = books, accounts = accounts,
+    paged = true, page = 1, page_size = 6,
+    cover_mode = true, cover_columns = 3, cover_paths = account_cover_paths,
+}, {})
+expect(account_cover_view.page_count == 2 and #account_cover_view._item_rows == 6
+        and #account_cover_view._focus_item_rows == 2
+        and account_cover_view._item_rows[1]._has_cover == true
+        and account_cover_view._item_rows[1]._has_download_status == false,
+    "public-account cover mode did not reuse the book-cover grid safely")
+
 local large_shelf = {}
 for index = 1, 1000 do
     large_shelf[index] = { bookId = tostring(index), title = "Book " .. tostring(index) }
@@ -343,7 +355,7 @@ ok, error_message = pcall(function()
     }, {})
 end)
 expect(ok, "empty review list failed to build: " .. tostring(error_message))
-expect(#shown == 11, "all bookshelf and empty-state views should be shown")
+expect(#shown == 12, "all bookshelf and empty-state views should be shown")
 
 expect(#paged_view._header_buttons == 5 and paged_view._tab_buttons == nil
         and paged_view._action_primary == nil, "shelf retained its permanent tabs or toolbars")

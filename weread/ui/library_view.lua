@@ -828,7 +828,7 @@ function LibraryView:preparePagination()
     local source = self.mode == "public_account"
         and (self.accounts or {}) or (self.books or {})
     self.page_size = math.max(1, math.floor(tonumber(self.page_size) or 10))
-    if self.cover_mode and self.mode == "books" then
+    if self.cover_mode then
         local columns = math.max(1, math.floor(tonumber(self.cover_columns) or 3))
         local rows = math.max(1, math.floor(tonumber(self.cover_rows) or 2))
         self.page_size = columns * rows
@@ -866,7 +866,7 @@ function LibraryView:content()
         first = (self.page - 1) * self.page_size + 1
         last = math.min(#source, first + self.page_size - 1)
     end
-    if self.cover_mode and self.mode == "books" then
+    if self.cover_mode then
         local columns = math.max(1, math.floor(tonumber(self.cover_columns) or 3))
         local rows = math.max(1, math.floor(tonumber(self.cover_rows) or 2))
         local cell_width = math.floor(self.content_width / columns)
@@ -985,7 +985,7 @@ function LibraryView:init()
     local page_bar = self:pageBar()
     local scroll_h = math.max(1, self.screen_h - header:getSize().h
         - (page_bar and page_bar:getSize().h or 0))
-    if self.cover_mode and self.mode == "books" then
+    if self.cover_mode then
         local rows = math.max(1, math.floor(tonumber(self.cover_rows) or 2))
         self.cover_content_height = scroll_h
         self.cover_cell_height = math.max(1, math.floor(scroll_h / rows))

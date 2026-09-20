@@ -451,6 +451,7 @@ function M:_runAnnotationJob(context, options)
         document = not options.prefetch and self.ui.document or nil,
         document_key = not options.prefetch and context.document_key or nil,
         refresh = options.refresh or options.clear_existing, clear_existing = options.clear_existing,
+        reset_legacy = options.reset_legacy,
         offline = options.offline, async_network = request.trapper ~= nil,
         is_online = function() return self:isNetworkConnected() end,
         on_reset = function()

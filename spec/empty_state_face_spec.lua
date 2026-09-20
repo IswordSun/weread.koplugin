@@ -283,6 +283,7 @@ local account_cover_view = LibraryView.show({
 expect(account_cover_view.page_count == 2 and #account_cover_view._item_rows == 6
         and #account_cover_view._focus_item_rows == 2
         and account_cover_view._item_rows[1]._has_cover == true
+        and account_cover_view._item_rows[1]._cover_fit == "contain"
         and account_cover_view._item_rows[1]._has_download_status == false,
     "public-account cover mode did not reuse the book-cover grid safely")
 

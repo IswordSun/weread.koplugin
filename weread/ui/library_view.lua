@@ -300,6 +300,40 @@ local function build_center_cropped_cover(path, width, height)
     return nil
 end
 
+-- Public-account covers are typically square profile images. Keep their
+-- proportions and reserve a white breathing margin instead of cropping a
+-- portrait card tightly around an avatar.
+local function build_center_contained_cover(path, width, height, inset)
+    local ok, contained = pcall(function()
+        local RenderImage = require("ui/renderimage")
+        local source = RenderImage:renderImageFile(path, false)
+        if not source then return nil end
+        local source_width, source_height = source:getWidth(), source:getHeight()
+        if source_width < 1 or source_height < 1 then
+            source:free()
+            return nil
+        end
+        inset = math.max(0, math.floor(tonumber(inset) or 0))
+        local available_width = math.max(1, width - 2 * inset)
+        local available_height = math.max(1, height - 2 * inset)
+        local factor = math.min(available_width / source_width, available_height / source_height)
+        local target_width = math.max(1, math.floor(source_width * factor + 0.5))
+        local target_height = math.max(1, math.floor(source_height * factor + 0.5))
+        local scaled = source:scale(target_width, target_height)
+        if scaled ~= source then source:free() end
+        local output = Blitbuffer.new(width, height, scaled:getType())
+        output:paintRect(0, 0, width, height, Blitbuffer.COLOR_WHITE)
+        output:blitFrom(scaled,
+            math.floor((width - target_width) / 2),
+            math.floor((height - target_height) / 2),
+            0, 0, target_width, target_height)
+        scaled:free()
+        return output
+    end)
+    if ok then return contained end
+    return nil
+end
+
 function DownloadStatus:init()
     self.size = math.max(1, math.floor(tonumber(self.size) or 1))
     self.dimen = Geom:new{ w = self.size, h = self.size }
@@ -410,6 +444,7 @@ local CoverCell = InputContainer:extend{
     height = nil,
     cover_path = nil,
     cover_loading = false,
+    contain_cover = false,
     cached = false,
     callback = nil,
     show_parent = nil,
@@ -424,14 +459,18 @@ function CoverCell:init()
     local border = Size.border.thin
     local image_width = math.max(1, metrics.card_width - 2 * border)
     local image_height = math.max(1, metrics.card_height - 2 * border)
+    self._cover_fit = self.contain_cover and "contain" or "crop"
     local cover_content
     if self.cover_path then
         local image
         local ok = pcall(function()
-            local cropped = build_center_cropped_cover(self.cover_path, image_width, image_height)
-            if cropped then
+            local rendered = self.contain_cover
+                and build_center_contained_cover(self.cover_path, image_width, image_height,
+                    math.floor(math.min(image_width, image_height) * 0.10))
+                or build_center_cropped_cover(self.cover_path, image_width, image_height)
+            if rendered then
                 image = ImageWidget:new{
-                    image = cropped,
+                    image = rendered,
                     image_disposable = true,
                     scale_factor = 1,
                 }
@@ -896,6 +935,7 @@ function LibraryView:content()
                 cached = book._cached == true,
                 cover_path = self.cover_paths and self.cover_paths[book] or nil,
                 cover_loading = self.cover_loading and self.cover_loading[book] == true,
+                contain_cover = self.mode == "public_account",
                 width = width,
                 height = math.max(1, height),
                 show_parent = self,

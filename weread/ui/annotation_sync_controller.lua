@@ -885,8 +885,6 @@ function M:getUnifiedAnnotationMenuItems()
                 offline = not self:isNetworkConnected(),
             })
         end },
-        { text = _("Sync current chapter"), callback = function()
-            self:startUnifiedAnnotationSync({ offline = not self:isNetworkConnected() }) end },
         { text = _("Choose chapters to match"), callback = function()
             self:chooseAnnotationChapters()
         end },

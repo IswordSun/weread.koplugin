@@ -159,6 +159,7 @@ end
 
 test("page turns reuse word counts and document changes rebuild them", function()
     local word_reads = 0
+    local detection_reads = 0
     local function chapter(uid, words)
         return setmetatable({ chapterUid = uid }, { __index = function(_, key)
             if key == "wordCount" then
@@ -170,6 +171,10 @@ test("page turns reuse word counts and document changes rebuild them", function(
     local catalog = {}
     for index = 1, 5000 do catalog[index] = chapter(index, 10) end
     local f = fixture(nil, { get_chapters = function() return catalog end })
+    f.sync.detect_book = function()
+        detection_reads = detection_reads + 1
+        return "book"
+    end
     f.values.sync.pull_on_open = false
     f.sync:on_reader_ready()
     f.drain()
@@ -179,19 +184,32 @@ test("page turns reuse word counts and document changes rebuild them", function(
         f.sync:on_page_update()
     end
     eq(word_reads, 5000, "page turns do not reread chapter word counts")
+    eq(detection_reads, 1, "page turns repeated document book detection")
     eq(f.sync.local_position.chapter_uid, 4001, "page turn chapter")
     eq(f.sync.local_position.chapter_offset, 0, "page turn offset")
 
     catalog = { chapter(44, 200), chapter(55, 800) }
-    f.document.page = 50
-    f.sync.detect_book = function() return "other" end
+    local replacement = {
+        file = f.document.file,
+        page = 50,
+        getCurrentPage = f.document.getCurrentPage,
+        getPageCount = f.document.getPageCount,
+    }
+    f.sync.get_document = function() return replacement end
+    local replacement_detections = 0
+    f.sync.detect_book = function()
+        replacement_detections = replacement_detections + 1
+        return "other"
+    end
     local position = assert(f.sync:capture_local())
     eq(word_reads, 5002, "changed book rebuilds catalog even at the same path")
+    eq(replacement_detections, 1,
+        "replacement document at the same path was not detected again")
     eq(position.book_id, "other", "fresh book detection is preserved")
     eq(position.chapter_uid, 55, "new book chapter")
     eq(position.chapter_offset, 300, "new book offset")
 
-    f.document.file = "/cache/other/chapter.epub"
+    replacement.file = "/cache/other/chapter.epub"
     f.sync.get_file_context = function() return 1, catalog[1], false end
     position = assert(f.sync:capture_local())
     eq(word_reads, 5004, "changed file rebuilds catalog")

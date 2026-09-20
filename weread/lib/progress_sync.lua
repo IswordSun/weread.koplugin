@@ -142,24 +142,39 @@ function ProgressSync:_local_fraction()
     return nil
 end
 
-function ProgressSync:capture_local()
-    -- Recheck the document binding before using a cached catalog. The reader
-    -- can replace a document at the same path before its lifecycle callback
-    -- resets `current_book_id`.
-    local book_id = self.detect_book() or self.current_book_id
-    if not book_id or is_mp_book(book_id) then
-        return nil, "document_not_weread"
+function ProgressSync:_detect_document_book(document, path)
+    local cached = self.document_binding
+    if cached and cached.document == document and cached.path == path then
+        return cached.book_id
     end
-    book_id = tostring(book_id)
+    local book_id = self.detect_book()
+    book_id = book_id and tostring(book_id) or nil
+    self.document_binding = {
+        document = document,
+        path = path,
+        book_id = book_id,
+    }
+    return book_id
+end
+
+function ProgressSync:capture_local()
     local document = self.get_document()
     local path = document_path(document)
     if not document or not path then return nil, "document_unavailable" end
+    -- A page update only needs the binding established for this exact document
+    -- object and path. A replacement document, even at the same path, is
+    -- detected again before its catalog can be reused.
+    local book_id = self:_detect_document_book(document, path)
+    if not book_id or is_mp_book(book_id) then
+        return nil, "document_not_weread"
+    end
     local cached = self.document_context
     local book
     local chapters
     local current_chapter
     local is_full_book
-    if cached and cached.book_id == book_id and cached.path == path then
+    if cached and cached.document == document
+        and cached.book_id == book_id and cached.path == path then
         book = cached.book
         chapters = cached.chapters
         current_chapter = cached.current_chapter
@@ -175,6 +190,7 @@ function ProgressSync:capture_local()
         _index, current_chapter, is_full_book =
             self.get_file_context(book, path)
         self.document_context = {
+            document = document,
             book_id = book_id,
             book = book,
             chapters = chapters,
@@ -696,13 +712,15 @@ function ProgressSync:on_reader_ready()
     self.local_position = nil
     self.remote_position = nil
     self.document_context = nil
+    self.document_binding = nil
     self.verified = false
     self.dirty = false
     self.state = "waiting"
 
     self.scheduler:scheduleIn(OPEN_DELAY_SECONDS, function()
         if generation ~= self.generation then return end
-        local book_id = self.detect_book()
+        local document = self.get_document()
+        local book_id = self:_detect_document_book(document, document_path(document))
         if not book_id or is_mp_book(book_id) then
             self.state = "unsupported"
             return
@@ -759,6 +777,7 @@ function ProgressSync:on_close_document()
     self.local_position = nil
     self.remote_position = nil
     self.document_context = nil
+    self.document_binding = nil
 end
 
 function ProgressSync:on_suspend()

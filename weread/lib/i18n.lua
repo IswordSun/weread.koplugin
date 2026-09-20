@@ -5,7 +5,6 @@ local zh = {
     ["Continue matching · %1/%2 chapters, %3 underlines"] = "继续匹配 · %1/%2 章，%3 条划线",
     ["Underlines and thoughts management"] = "划线和想法管理",
     ["Continue matching"] = "继续匹配",
-    ["Sync current chapter"] = "同步当前章节",
     ["Choose chapters to match"] = "选择章节匹配",
     ["Select chapters. Fetching again replaces their saved thoughts."] = "勾选章节获取想法，重新获取将清理所选章节的旧数据",
     ["WeRead: %1"] = "微信：%1",

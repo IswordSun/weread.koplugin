@@ -103,10 +103,17 @@ ordered.view = { view_mode = "page" }
 local first_visible = ordered:_computeVisible()
 expect(#first_visible >= 2 and first_visible[1].record.id == "49",
     "ordered lookup skipped an underline overlapping from an earlier page")
+local ordered_position_reads = 0
+ordered_document.getPosFromXPointer = function(_self, value)
+    ordered_position_reads = ordered_position_reads + 1
+    return value
+end
 comparisons = 0
 ordered:_computeVisible()
 expect(comparisons < 25,
     "ordered page lookup still rescanned the full annotation window")
+expect(ordered_position_reads == 0,
+    "page XPointer bounds still performed per-record position conversions")
 
 overlay:resetLayout()
 overlay:paintTo(buffer, 0, 0)
@@ -176,6 +183,28 @@ package.preload["weread.ui.thought_popup"] = function()
     return { show = function(options) shown_popup = options end }
 end
 local Controller = require("weread.ui.xpointer_overlay_controller")
+local registered_zones, unregistered_zones = {}, 0
+local zone_cache = { ignore_edge_thought_taps = true, edge_tap_ratio = 0.20 }
+local zone_host = {
+    settings = { get = function() return zone_cache end },
+    ui = {
+        registerTouchZones = function(_self, zones) registered_zones[#registered_zones + 1] = zones end,
+        unRegisterTouchZones = function() unregistered_zones = unregistered_zones + 1 end,
+    },
+}
+for name, method in pairs(Controller) do zone_host[name] = method end
+expect(zone_host:_registerXPointerOverlayTouchZone(),
+    "overlay touch zone did not register")
+expect(registered_zones[1][1].screen_zone.ratio_x == 0.20
+        and registered_zones[1][1].screen_zone.ratio_w == 0.60,
+    "edge page-turn area still enters the overlay touch zone")
+zone_cache.ignore_edge_thought_taps = false
+expect(zone_host:_updateXPointerOverlayTouchZone(),
+    "overlay touch zone did not refresh after setting change")
+expect(unregistered_zones == 1
+        and registered_zones[2][1].screen_zone.ratio_x == 0
+        and registered_zones[2][1].screen_zone.ratio_w == 1,
+    "disabling edge protection did not restore full underline tap coverage")
 local invalidations = 0
 local host = {
     _xpointer_overlay = {
@@ -290,12 +319,11 @@ expect(sync_calls == 1,
 local Unified = require("weread.ui.annotation_sync_controller")
 for name, method in pairs(Unified) do bind_host[name] = method end
 local local_book_items = bind_host:getXPointerOverlayPrototypeMenuItems()
-expect(#local_book_items == 5, "unified annotation management is missing an action")
+expect(#local_book_items == 4, "unified annotation management is missing an action")
 expect(local_book_items[1].text == "Linked WeRead book: 测试书"
     and local_book_items[2].text == "Continue matching"
-    and local_book_items[3].text == "Sync current chapter"
-    and local_book_items[4].text == "Choose chapters to match"
-    and local_book_items[5].text == "Clear underlines and thoughts",
-    "management did not distinguish whole-book, chapter, and clearing actions")
+    and local_book_items[3].text == "Choose chapters to match"
+    and local_book_items[4].text == "Clear underlines and thoughts",
+    "management retained the removed current-chapter action")
 
 print(("xpointer_overlay_spec: %d checks"):format(checks))

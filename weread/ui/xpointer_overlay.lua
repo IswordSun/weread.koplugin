@@ -183,6 +183,7 @@ function Overlay:_computeVisible()
             page_end = document:getPageXPointer(next_page)
         end
     end
+    local bounded_page = view.view_mode == "page" and page_start and page_end
     local first = self:_orderedStart(document, page_start)
     for index = first, #self.records do
         local record = self.records[index]
@@ -192,14 +193,21 @@ function Overlay:_computeVisible()
                 if self.records_ordered then break end
                 goto continue
             end
-            local ok_start, start_pos = pcall(
-                document.getPosFromXPointer, document, record.pos0
-            )
-            local ok_end, end_pos = pcall(
-                document.getPosFromXPointer, document, record.pos1
-            )
-            if ok_start and ok_end and tonumber(start_pos) and tonumber(end_pos)
-                and start_pos <= bottom and end_pos >= top then
+            -- Page XPointer bounds already establish that this record crosses
+            -- the displayed page. In paged mode that avoids two costly
+            -- XPointer-to-position conversions for every candidate.
+            local visible_on_page = bounded_page
+            if not visible_on_page then
+                local ok_start, start_pos = pcall(
+                    document.getPosFromXPointer, document, record.pos0
+                )
+                local ok_end, end_pos = pcall(
+                    document.getPosFromXPointer, document, record.pos1
+                )
+                visible_on_page = ok_start and ok_end and tonumber(start_pos)
+                    and tonumber(end_pos) and start_pos <= bottom and end_pos >= top
+            end
+            if visible_on_page then
                 candidates = candidates + 1
                 local ok_boxes, boxes = pcall(
                     document.getScreenBoxesFromPositions,

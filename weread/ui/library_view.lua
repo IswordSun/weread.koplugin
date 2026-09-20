@@ -301,8 +301,8 @@ local function build_center_cropped_cover(path, width, height)
 end
 
 -- Public-account covers are typically square profile images. Keep their
--- proportions and reserve a white breathing margin instead of cropping a
--- portrait card tightly around an avatar.
+-- proportions and center them on white instead of cropping a portrait card
+-- tightly around an avatar.
 local function build_center_contained_cover(path, width, height, inset)
     local ok, contained = pcall(function()
         local RenderImage = require("ui/renderimage")
@@ -465,8 +465,9 @@ function CoverCell:init()
         local image
         local ok = pcall(function()
             local rendered = self.contain_cover
-                and build_center_contained_cover(self.cover_path, image_width, image_height,
-                    math.floor(math.min(image_width, image_height) * 0.10))
+                -- Let square avatars fill the card width; the portrait card
+                -- naturally retains its white breathing room above and below.
+                and build_center_contained_cover(self.cover_path, image_width, image_height, 0)
                 or build_center_cropped_cover(self.cover_path, image_width, image_height)
             if rendered then
                 image = ImageWidget:new{

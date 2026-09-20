@@ -178,6 +178,16 @@ store:put("book", "meta", "enabled", true)
     assert(calls == calls_before_legacy
         and legacy_notice == "Thought data format has been upgraded. Match again to download current data.",
         "opening an old cache did not stay local with a rematch notice")
+    -- Prefetch defaults to off; the upgrade notice must not depend on it.
+    host:setAnnotationPrefetchEnabled(false)
+    legacy_notice = nil
+    local calls_before_off_notice = calls
+    host:onUnifiedAnnotationsReady()
+    drain()
+    assert(calls == calls_before_off_notice
+        and legacy_notice == "Thought data format has been upgraded. Match again to download current data.",
+        "opening an old cache with prefetch disabled did not show the rematch notice")
+    host:setAnnotationPrefetchEnabled(true)
     host.showTransientInfo = original_transient_info
     store:put("book", "source", "3", nil)
     store:put("book", "source_status", "3", nil)
@@ -586,5 +596,53 @@ do
     assert(spawned > killed and prevented == allowed)
     WorkerSettings.capture = capture
 end
+
+-- A user-initiated sync must actually rebuild a legacy (pre-persistence)
+-- chapter instead of silently skipping it: regression for `reset_legacy`
+-- never reaching the Sync job. The worker block above left its auth-keyed
+-- settings and request-tracking client behind, so restore plain fixtures.
+package.loaded["ffi/util"], package.loaded["ui/trapper"] = nil, nil
+host.settings = { get = function() return cache end, set = function() end, flush = function() end }
+host.client = {
+    get_chapter_underlines = function() calls = calls + 1
+        return true, { underlines = { { range = "0-1", markText = "a" } } } end,
+    build_chapter_review_batches = function(_self, ranges)
+        return { { { range = ranges[1] } } }
+    end,
+    get_chapter_reviews_batch = function()
+        return true, { reviews = {} }
+    end,
+}
+context = { path = "single", book_id = "legacy-sync", document_key = "single", store = store,
+    binding = { book_id = "legacy-sync", title = "fixture" }, statuses = {},
+    chapters = { { chapterUid = "9" } }, ranges = {} }
+host._annotation_context = context
+store:put("legacy-sync", "source", "9", {
+    book_id = "legacy-sync", chapter_uid = "9",
+    underlines = { { range = "1-2", markText = "alpha" } },
+    reviews = { { range = "1-2", pageReviews = { { review = { content = "old thought" } } } } },
+}, "9")
+store:put("legacy-sync", "source_status", "9", { revision = "legacy", total = 1 }, "9")
+local legacy_persistence_version = require("weread.lib.annotation_sync").PERSISTENCE_VERSION
+local calls_before_explicit_sync = calls
+host:startUnifiedAnnotationSync({ offline = false })
+drain()
+local rebuilt_legacy_source = store:get("legacy-sync", "source", "9")
+assert(calls > calls_before_explicit_sync
+        and rebuilt_legacy_source and #(rebuilt_legacy_source.reviews or {}) == 0
+        and store:get("legacy-sync", "source_status", "9").persistence_version == legacy_persistence_version,
+    "an explicit sync did not rebuild the legacy chapter with bounded persistence")
+
+-- A store busy with a cancelled prefetch worker finishing its last write must
+-- not abort the reader-ready path: the display flag write is best effort.
+host:setAnnotationPrefetchEnabled(false)
+context.statuses = {
+    [store:projectionKey(context.document_key, "9")] = { stats = { total = 1, located = 1 } },
+}
+local original_put = store.put
+store.put = function() error("ljsqlite3[busy] database is locked") end
+local ready_ok = pcall(function() host:onUnifiedAnnotationsReady() end)
+store.put = original_put
+assert(ready_ok, "a failed display flag write aborted the reader-ready path")
 helper.cleanup()
-print("annotation_sync_controller_spec: consent, completion, cancellation, sessions and prefetch passed")
+print("annotation_sync_controller_spec: consent, completion, cancellation, sessions, prefetch and legacy rebuild passed")

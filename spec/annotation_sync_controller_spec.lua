@@ -213,6 +213,18 @@ assert(synced_chapters == nil and #notices == notices_before_gap + 1
     "an unmapped reader position silently synced the preceding chapter")
 context.ranges["110"].end_xpointer = nil
 host.ui.document.getXPointer = function() return "1120" end
+-- A single mapped chapter must not claim a position its explicit boundary has
+-- already rejected: the reader may sit in an unmapped appendix.
+context.chapters = { { chapterUid = "1" } }
+context.ranges = { ["1"] = { start_xpointer = "0", end_xpointer = "100" } }
+host.ui.document.getXPointer = function() return "150" end
+synced_chapters = nil
+local notices_before_single_gap = #notices
+host:startUnifiedAnnotationSync({ offline = true })
+assert(synced_chapters == nil and #notices == notices_before_single_gap + 1
+        and notices[#notices] == "Current position is outside the matched chapters. Use “Choose chapters to match”.",
+    "a single mapped chapter swallowed a position outside its boundary")
+host.ui.document.getXPointer = function() return "1120" end
 host._runAnnotationJob = original_run_annotation_job
 -- Matching one selected chapter must activate its projection immediately;
 -- waiting for every mapped chapter leaves valid underlines invisible.

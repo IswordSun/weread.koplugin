@@ -274,6 +274,19 @@ expect(account_view.page_count == 2 and #account_view._item_rows == 2
         and account_view._item_rows[1].text == "Account 11",
     "public-account pagination used the wrong source or slice")
 
+local account_cover_paths = { [accounts[1]] = "/covers/account.jpg" }
+local account_cover_view = LibraryView.show({
+    mode = "public_account", books = books, accounts = accounts,
+    paged = true, page = 1, page_size = 6,
+    cover_mode = true, cover_columns = 3, cover_paths = account_cover_paths,
+}, {})
+expect(account_cover_view.page_count == 2 and #account_cover_view._item_rows == 6
+        and #account_cover_view._focus_item_rows == 2
+        and account_cover_view._item_rows[1]._has_cover == true
+        and account_cover_view._item_rows[1]._cover_fit == "contain"
+        and account_cover_view._item_rows[1]._has_download_status == false,
+    "public-account cover mode did not reuse the book-cover grid safely")
+
 local large_shelf = {}
 for index = 1, 1000 do
     large_shelf[index] = { bookId = tostring(index), title = "Book " .. tostring(index) }
@@ -286,6 +299,8 @@ expect(large_view.page_count == 100 and #large_view._item_rows == 10,
     "large bookshelf created more than one page of row widgets")
 
 books[1]._cached = true
+books[1].finishReading = "1"
+books[1].secret = "1"
 local cover_paths = { [books[1]] = "/covers/one.jpg" }
 local cover_view = LibraryView.show({
     mode = "books", books = books, accounts = {},
@@ -303,10 +318,18 @@ expect(cover_view._item_rows[1]._has_cover == true
     "cover bookshelf did not distinguish cached covers from placeholders")
 expect(cover_view._item_rows[1].status == nil,
     "cover bookshelf retained date or cache status metadata")
-expect(cover_view._item_rows[1]._has_cached_corner == true
-        and cover_view._item_rows[1]._cached_corner_size == 16
-        and cover_view._item_rows[2]._has_cached_corner == false,
-    "cover bookshelf cached corner did not follow download state")
+expect(cover_view._item_rows[1]._has_download_status == true
+        and cover_view._item_rows[1]._download_status_checked == true
+        and cover_view._item_rows[2]._has_download_status == false
+        and cover_view._item_rows[2]._download_status_checked == false,
+    "cover bookshelf download status did not follow download state")
+expect(cover_view._item_rows[1]._has_finished_badge == true
+        and cover_view._item_rows[2]._has_finished_badge == false,
+    "cover bookshelf finished badge did not follow shelf completion state")
+expect(cover_view._item_rows[1]._has_private_badge == true
+        and cover_view._item_rows[1]._private_badge_size == 24
+        and cover_view._item_rows[2]._has_private_badge == false,
+    "cover bookshelf private badge did not follow the private-reading state")
 expect(cover_view._item_rows[1].width == 200
         and cover_view._item_rows[3].width == 200,
     "cover bookshelf columns did not fill the complete screen width")
@@ -333,7 +356,7 @@ ok, error_message = pcall(function()
     }, {})
 end)
 expect(ok, "empty review list failed to build: " .. tostring(error_message))
-expect(#shown == 11, "all bookshelf and empty-state views should be shown")
+expect(#shown == 12, "all bookshelf and empty-state views should be shown")
 
 expect(#paged_view._header_buttons == 5 and paged_view._tab_buttons == nil
         and paged_view._action_primary == nil, "shelf retained its permanent tabs or toolbars")

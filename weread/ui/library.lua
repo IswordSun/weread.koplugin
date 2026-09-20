@@ -221,6 +221,19 @@ local function shelf_page_items(items, page, page_size)
     return result, page
 end
 
+-- Regular books already provide HTTPS covers. Public-account avatars are
+-- commonly returned as http://wx.qlogo.cn URLs; use the equivalent HTTPS URL
+-- so cover mode never requests an avatar over plaintext transport.
+local function shelf_cover_url(book)
+    local cover = type(book) == "table" and book.cover or nil
+    if type(cover) ~= "string" then return nil end
+    if cover:match("^https://") then return cover end
+    if cover:match("^http://wx%.qlogo%.cn/") then
+        return "https://" .. cover:sub(#"http://" + 1)
+    end
+    return nil
+end
+
 function M:getShelfCoverCache()
     if not self.shelf_cover_cache then
         local CoverCache = require("weread.lib.cover_cache")
@@ -229,15 +242,15 @@ function M:getShelfCoverCache()
     return self.shelf_cover_cache
 end
 
-function M:fetchVisibleShelfCovers(view, books, options)
-    if not view or not books or #books == 0 then return end
+function M:fetchVisibleShelfCovers(view, items, options)
+    if not view or not items or #items == 0 then return end
     options = options or {}
     local cache = self:getShelfCoverCache()
-    local visible = shelf_page_items(books, view.page, view.page_size or 6)
+    local visible = shelf_page_items(items, view.page, view.page_size or 6)
     local missing = {}
     local online = self:isNetworkOnline()
     for _, book in ipairs(visible) do
-        if type(book.cover) == "string" and book.cover:match("^https://")
+        if shelf_cover_url(book)
             and not cache:pathFor(book) then
             -- Legacy full-resolution cache entries can be converted while
             -- offline. A network request is only needed when no source exists.
@@ -250,7 +263,7 @@ function M:fetchVisibleShelfCovers(view, books, options)
 
     if self.shelf_cover_job then
         -- Keep only the newest visible page while the current child exits.
-        self.shelf_cover_pending = { view = view, books = books, options = options }
+        self.shelf_cover_pending = { view = view, items = items, options = options }
         return
     end
 
@@ -274,7 +287,7 @@ function M:fetchVisibleShelfCovers(view, books, options)
             local next_options = {}
             for key, value in pairs(options) do next_options[key] = value end
             next_options.prepared_shelf = {
-                books = books,
+                books = options.prepared_books or self.shelf_regular or {},
                 accounts = options.prepared_accounts or self.shelf_mp or {},
             }
             next_options.page = view.page
@@ -284,7 +297,7 @@ function M:fetchVisibleShelfCovers(view, books, options)
         local pending = self.shelf_cover_pending
         self.shelf_cover_pending = nil
         if pending then
-            self:fetchVisibleShelfCovers(pending.view, pending.books, pending.options)
+            self:fetchVisibleShelfCovers(pending.view, pending.items, pending.options)
         end
     end
 
@@ -303,7 +316,7 @@ function M:fetchVisibleShelfCovers(view, books, options)
             local ok, path = pcall(cache.thumbnailFromCached, cache, book)
             if not (ok and path) and online then
                 local downloaded, data = pcall(function()
-                    return self.client:get_binary(book.cover, {
+                    return self.client:get_binary(shelf_cover_url(book), {
                         skip_cookie = true,
                         persist_response_cookies = false,
                         timeout = { 8, 12 },
@@ -383,7 +396,7 @@ function M:showShelfView(mode, keyword, old_view, options)
     local books = prepared and prepared.books or filtered(group and group.books or self.shelf_regular, true)
     local accounts = prepared and prepared.accounts or filtered(self.shelf_mp, false)
     local shelf_settings = self.settings:get("shelf")
-    local cover_mode = mode == "books" and shelf_settings.view_mode == "cover"
+    local cover_mode = shelf_settings.view_mode == "cover"
     local paged = cover_mode or shelf_settings.paginated ~= false
     local page = paged and (options.page or self.shelf_view_pages[mode] or 1) or 1
     local source = mode == "public_account" and accounts or books
@@ -396,12 +409,12 @@ function M:showShelfView(mode, keyword, old_view, options)
         cover_loading = {}
         local cache = self:getShelfCoverCache()
         local online = self:isNetworkOnline()
-        local visible, clamped_page = shelf_page_items(books, page, page_size)
+        local visible, clamped_page = shelf_page_items(source, page, page_size)
         page = clamped_page
         for _, book in ipairs(visible) do
             local path = cache:pathFor(book)
             cover_paths[book] = path
-            if not path and type(book.cover) == "string" and book.cover:match("^https://") then
+            if not path and shelf_cover_url(book) then
                 cover_loading[book] = online or cache:sourcePathFor(book) ~= nil
             end
         end
@@ -507,8 +520,9 @@ function M:showShelfView(mode, keyword, old_view, options)
     if cover_mode and not skip_cover_fetch_once then
         local fetch_options = {}
         for key, value in pairs(options) do fetch_options[key] = value end
+        fetch_options.prepared_books = books
         fetch_options.prepared_accounts = accounts
-        self:fetchVisibleShelfCovers(view, books, fetch_options)
+        self:fetchVisibleShelfCovers(view, source, fetch_options)
     end
 end
 

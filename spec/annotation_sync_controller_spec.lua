@@ -409,14 +409,16 @@ do
         settings = { get = function() return {} end },
         _xpointer_overlay = { records = {}, setRecords = function(self, records) self.records = records end },
     }, { __index = host })
-    local menu_items, updated_model, closed_menu
+    local menu_items, menu_options, updated_model, closed_menu
     local menu_token = {}
     local manager = require("ui/uimanager")
     local close = manager.close
     manager.close = function(_self, widget) closed_menu = widget end
-    mapping_host.showList = function(_self, title, items)
-        assert(title == "Choose WeRead chapter")
-        menu_items = items
+    local picker = require("weread.ui.annotation_chapter_picker")
+    local show_picker = picker.show
+    picker.show = function(options)
+        if not options.choices then return show_picker(options) end
+        menu_items, menu_options = options.choices, options
         return menu_token
     end
     local network_calls = calls
@@ -435,7 +437,9 @@ do
     options = picker_options
     assert(options.model.by_uid.a.xpointer == "10" and options.model.count == 0, "mapping did not survive reopen")
     options.on_edit(options.model.nodes[3], function(result) updated_model = result end)
-    assert(menu_items[1].select_enabled == false and menu_items[1].text:find("Local A", 1, true))
+    assert(menu_items[1].select_enabled == false and menu_items[1].detail:find("Local A", 1, true)
+        and menu_items[1].text == "Remote A" and menu_items[1].status == "Already linked",
+        "occupied mapping must be a separate detail, not part of the chapter title")
     menu_items[1].callback()
     assert(not store:get("manual", "chapter_mapping", doc_key)["20"], "occupied chapter was reused")
     menu_items[2].callback()
@@ -466,7 +470,9 @@ do
     mapping_host:chooseAnnotationChapters()
     options = picker_options
     options.on_edit(options.model.by_uid.a, function(result) updated_model = result end)
-    menu_items[1].callback()
+    assert(#menu_items == 2 and menu_items[1].current and menu_options.on_remove,
+        "remove action must be separate from catalog choices")
+    menu_options.on_remove()
     assert(not updated_model.by_uid.a and not store:get("manual", "projection", key)
         and not store:get("manual", "matching", key), "statusless old coordinates survived a mapping change")
     assert(store:get("manual", "chapter_mapping", doc_key)["10"] == false)
@@ -482,6 +488,7 @@ do
     assert(store:get("manual", "chapter_mapping", doc_key)["10"] == false)
     assert(calls == network_calls, "manual matching performed network work")
     manager.close = close
+    picker.show = show_picker
 end
 -- Foreground HTTP must yield outside Sync.thread, so cancel can terminate the
 -- suspended request without resuming the pipeline early or committing late data.

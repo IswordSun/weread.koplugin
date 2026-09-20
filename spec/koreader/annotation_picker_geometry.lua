@@ -1,7 +1,7 @@
 -- KOREADER_WIDGET_DIR=/path/to/koreader luajit spec/koreader/annotation_picker_geometry.lua
--- Real KOReader Button, ButtonTable and layout containers; inert fonts/screen/events.
+-- Real KOReader Button and layout containers; inert fonts/screen/events.
 dofile("spec/empty_state_face_spec.lua")
-local native = assert(os.getenv("KOREADER_WIDGET_DIR"))
+assert(os.getenv("KOREADER_WIDGET_DIR"))
 local Device = require("device")
 Device.hasDPad = function() return false end
 local Size = require("ui/size")
@@ -11,9 +11,7 @@ Size.padding.buttontable = 6
 local FocusManager = require("ui/widget/focusmanager")
 FocusManager.ges_events, FocusManager.selected = {}, { x = 1, y = 1 }
 FocusManager.getSize = function(self) return self[1]:getSize() end
-package.preload["ui/widget/buttontable"] = function()
-    return dofile(native .. "/frontend/ui/widget/buttontable.lua")
-end
+require("ui/widget/button").getSize = function(self) return self[1]:getSize() end
 package.preload["weread.lib.plugin_util"] = function()
     return { tr = function(text) return text end,
         T = function(text, value) return (text:gsub("%%1", tostring(value))) end }
@@ -53,8 +51,9 @@ for _, size in ipairs({ { 600, 800 }, { 1072, 1448 }, { 800, 600 } }) do
     view.layout[1][1].callback()
     view:onNextPage(); check()
     view:onPrevPage(); check()
-    assert(view.actions.buttons_layout[1][1].enabled)
-    view.actions.buttons_layout[1][1].callback()
+    assert(view.action_button.enabled and view.action_button:getSize().h == 64)
+    assert(view.body[2] == view.actions and view.layout[#view.layout - 1][1] == view.action_button)
+    view.action_button.callback()
     assert(chosen and #chosen == 1 and chosen[1] == chapters[1])
     print("Native annotation picker: " .. size[1] .. "x" .. size[2] .. "; " .. view.per_page .. " rows/page")
 end

@@ -460,8 +460,10 @@ expect(#shown == 14, "all bookshelf and empty-state views should be shown")
 expect(#paged_view._header_buttons == 5 and paged_view._tab_buttons == nil
         and paged_view._action_primary == nil, "shelf retained its permanent tabs or toolbars")
 local width = 0
-for _, button in ipairs(paged_view._header_buttons) do width = width + button.width end
-expect(width == 600, "compact header controls escaped the screen width")
+for _, button in ipairs(paged_view._header_buttons) do width = width + button:getSize().w end
+expect(width <= 600, "compact header controls escaped the screen width")
+expect(paged_view._header_buttons[2].width == nil and paged_view._header_buttons[2].max_width == 312,
+    "source button must size its feedback to the label, with a screen-width cap")
 changed_page = nil
 expect(paged_view:onShelfSwipe(nil, { direction = "west" }) and changed_page == 3,
     "left swipe did not use the same next page as the button")

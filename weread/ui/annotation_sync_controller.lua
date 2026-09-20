@@ -797,21 +797,22 @@ function M:_chooseAnnotationChapterMatch(context, node, on_saved)
         end
     end
     local items = {}
-    if node.chapter then
-        items[#items + 1] = { text = _("Remove this chapter match"), callback = function() save(false) end }
-    end
     for _index, chapter in ipairs(context.catalog) do
         local uid = Chapters.uid(chapter)
         local range = context.ranges[uid]
         local occupied = range and range.start_xpointer ~= node.xpointer
         local title = string.rep("  ", math.min(5, math.max(0, (tonumber(chapter.level) or 1) - 1)))
             .. (chapter.title or uid)
-        if occupied then title = title .. " · " .. T(_("Linked to: %1"), range.title or range.toc_index) end
-        items[#items + 1] = { text = title, dim = occupied, select_enabled = not occupied,
-            mandatory = range and not occupied and _("Current") or nil,
+        local current = range ~= nil and not occupied
+        items[#items + 1] = { text = title, select_enabled = not occupied, current = current,
+            detail = range and T(_("Local: %1"), range.title or range.toc_index) or _("No local chapter linked"),
+            status = current and "✓ " .. _("Current match") or occupied and _("Already linked") or _("Available"),
             callback = function() if not occupied then save(uid) end end }
     end
-    menu = self:showList(_("Choose WeRead chapter"), items, nil, { subtitle = node.title })
+    menu = require("weread.ui.annotation_chapter_picker").show{
+        choices = items, local_title = node.title,
+        on_remove = node.chapter and function() save(false) end or nil,
+    }
     return menu
 end
 

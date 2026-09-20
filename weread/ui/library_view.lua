@@ -183,7 +183,16 @@ function PrivateReadingBadge:_inside_cover(px, py)
         self.card_width, self.card_height, self.card_radius)
 end
 
-function PrivateReadingBadge:_paint_mask(bb, x, y, width, height)
+-- Paint one horizontal glyph run, clipped to the lower-left pennant triangle:
+-- at badge row `local_y` the pennant only covers columns `0..local_y`, so
+-- smaller badges cannot leave stray glyph pixels on the cover artwork.
+function PrivateReadingBadge:_paint_triangle_run(bb, origin_x, origin_y, local_x, local_y, width, color)
+    local stop_x = math.min(local_x + width - 1, local_y)
+    if stop_x < local_x then return end
+    bb:paintRect(origin_x + local_x, origin_y + local_y, stop_x - local_x + 1, 1, color)
+end
+
+function PrivateReadingBadge:_paint_mask(bb, origin_x, origin_y, mask_x, mask_y, width, height)
     -- Official private-reading glyph: a flat crown and straight cheeks that
     -- finish with a shallow rounded chin.  A tapering wedge reads as a clipped
     -- shape at thumbnail size, so retain the vertical sides through most of it.
@@ -197,8 +206,8 @@ function PrivateReadingBadge:_paint_mask(bb, x, y, width, height)
             inset = math.min(math.floor((width - 3) / 2),
                 math.floor((width / 2) * arc))
         end
-        local paint_width = math.max(3, width - 2 * inset)
-        bb:paintRect(x + inset, y + row, paint_width, 1, Blitbuffer.COLOR_WHITE)
+        self:_paint_triangle_run(bb, origin_x, origin_y, mask_x + inset, mask_y + row,
+            math.max(3, width - 2 * inset), Blitbuffer.COLOR_WHITE)
     end
 end
 
@@ -224,17 +233,19 @@ function PrivateReadingBadge:paintTo(bb, x, y)
     -- Leave five pixels below the glyph, so the cover's rounded clipping never
     -- removes the mask's lower edge.
     local mask_y = math.max(0, self.size - mask_height - 8)
-    self:_paint_mask(bb, x + mask_x, y + mask_y, mask_width, mask_height)
+    self:_paint_mask(bb, x, y, mask_x, mask_y, mask_width, mask_height)
     -- Two short slanted eye openings stay legible at e-ink thumbnail scale.
-    local eye_y = y + mask_y + math.max(1, math.floor(mask_height * 0.35))
+    local eye_y = mask_y + math.max(1, math.floor(mask_height * 0.35))
     local eye_width = math.max(2, math.floor(mask_width * 0.20))
-    local left_eye_x = x + mask_x + math.max(1, math.floor(mask_width * 0.20))
-    local right_eye_x = x + mask_x + mask_width - eye_width
+    local left_eye_x = mask_x + math.max(1, math.floor(mask_width * 0.20))
+    local right_eye_x = mask_x + mask_width - eye_width
         - math.max(1, math.floor(mask_width * 0.20))
-    bb:paintRect(left_eye_x, eye_y, eye_width, 1, Blitbuffer.COLOR_BLACK)
-    bb:paintRect(left_eye_x + 1, eye_y + 1, math.max(1, eye_width - 1), 1, Blitbuffer.COLOR_BLACK)
-    bb:paintRect(right_eye_x, eye_y + 1, math.max(1, eye_width - 1), 1, Blitbuffer.COLOR_BLACK)
-    bb:paintRect(right_eye_x + 1, eye_y, eye_width, 1, Blitbuffer.COLOR_BLACK)
+    self:_paint_triangle_run(bb, x, y, left_eye_x, eye_y, eye_width, Blitbuffer.COLOR_BLACK)
+    self:_paint_triangle_run(bb, x, y, left_eye_x + 1, eye_y + 1,
+        math.max(1, eye_width - 1), Blitbuffer.COLOR_BLACK)
+    self:_paint_triangle_run(bb, x, y, right_eye_x, eye_y + 1,
+        math.max(1, eye_width - 1), Blitbuffer.COLOR_BLACK)
+    self:_paint_triangle_run(bb, x, y, right_eye_x + 1, eye_y, eye_width, Blitbuffer.COLOR_BLACK)
 end
 
 local function is_private_book(book)
@@ -289,8 +300,9 @@ local function build_center_cropped_cover(path, width, height)
             return nil
         end
         local crop = CoverLayout.centerCrop(source_width, source_height, width, height)
-        local filled = source:scale(crop.width, crop.height)
-        if filled ~= source then source:free() end
+        -- Scale through KOReader's MuPDF path: a shelf turn can rebuild a
+        -- dozen covers, and the per-pixel Lua fallback is far too slow for it.
+        local filled = RenderImage:scaleBlitBuffer(source, crop.width, crop.height, true)
         local output = Blitbuffer.new(width, height, filled:getType())
         output:blitFrom(filled, 0, 0, crop.offset_x, crop.offset_y, width, height)
         filled:free()
@@ -319,8 +331,7 @@ local function build_center_contained_cover(path, width, height, inset)
         local factor = math.min(available_width / source_width, available_height / source_height)
         local target_width = math.max(1, math.floor(source_width * factor + 0.5))
         local target_height = math.max(1, math.floor(source_height * factor + 0.5))
-        local scaled = source:scale(target_width, target_height)
-        if scaled ~= source then source:free() end
+        local scaled = RenderImage:scaleBlitBuffer(source, target_width, target_height, true)
         local output = Blitbuffer.new(width, height, scaled:getType())
         output:paintRect(0, 0, width, height, Blitbuffer.COLOR_WHITE)
         output:blitFrom(scaled,
@@ -464,11 +475,14 @@ function CoverCell:init()
     if self.cover_path then
         local image
         local ok = pcall(function()
-            local rendered = self.contain_cover
+            local rendered
+            if self.contain_cover then
                 -- Let square avatars fill the card width; the portrait card
                 -- naturally retains its white breathing room above and below.
-                and build_center_contained_cover(self.cover_path, image_width, image_height, 0)
-                or build_center_cropped_cover(self.cover_path, image_width, image_height)
+                rendered = build_center_contained_cover(self.cover_path, image_width, image_height, 0)
+            else
+                rendered = build_center_cropped_cover(self.cover_path, image_width, image_height)
+            end
             if rendered then
                 image = ImageWidget:new{
                     image = rendered,
@@ -496,12 +510,18 @@ function CoverCell:init()
         end
     end
     if not cover_content then
-        cover_content = TextWidget:new{
-            text = self.cover_loading and _("Cover loading") or _("No cover"),
-            face = Font:getFace("cfont", 18),
-            max_width = image_width,
+        -- Center the placeholder text inside the card, like the pre-grid
+        -- layout did before the rounded card painted its content top-left.
+        cover_content = CenterContainer:new{
+            dimen = Geom:new{ w = image_width, h = image_height },
+            TextWidget:new{
+                text = self.cover_loading and _("Cover loading") or _("No cover"),
+                face = Font:getFace("cfont", 18),
+                max_width = image_width,
+            },
         }
         self._has_cover = false
+        self._placeholder_centered = true
     end
     local cover_card = RoundedCoverCard:new{
         inner = cover_content,
@@ -556,6 +576,7 @@ function CoverCell:init()
         }
         badge.overlap_offset = { 0, metrics.card_height - badge_size }
         cover_layers[#cover_layers + 1] = badge
+        self._private_badge = badge
         self._private_badge_size = badge_size
     end
     local cover = OverlapGroup:new(cover_layers)

@@ -1,5 +1,6 @@
 local ConfirmBox = require("ui/widget/confirmbox")
 local InfoMessage = require("ui/widget/infomessage")
+local Notification = require("ui/widget/notification")
 local UIManager = require("ui/uimanager")
 local T = require("ffi/util").template
 
@@ -89,7 +90,7 @@ function ProgressSyncDialog.show_status(code)
     else
         return false
     end
-    UIManager:show(InfoMessage:new{ text = text, timeout = timeout })
+    UIManager:show(Notification:new{ text = text, timeout = timeout })
     return true
 end
 

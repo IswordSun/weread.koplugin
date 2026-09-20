@@ -123,7 +123,7 @@ function M:onReaderReady()
                 or self._current_weread_book_id ~= weread_book_id then
                 return
             end
-            self:showTransientInfo(_("Preparing WeRead book…"), 1.5)
+            self:showNotification(_("Preparing WeRead book…"), 1.5)
         end)
         -- Always register the tap interception: even when annotations are hidden
         -- we must intercept taps on thought links to suppress the native footnote

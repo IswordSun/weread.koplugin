@@ -359,6 +359,7 @@ assert(calls[count + 1] == "ulegacy" and migrated_status.persistence_version
 -- plugin upgrade changed the gateway chunk size). The stale staging must be
 -- dropped and re-downloaded instead of silently losing thoughts.
 local layout_size = 2
+local layout_omit
 local layout_calls = {}
 local layout_client = {
     get_chapter_underlines = function(_self, _book, uid)
@@ -384,8 +385,10 @@ local layout_client = {
         layout_calls[#layout_calls + 1] = "r" .. uid .. ":" .. tostring(batch[1])
         local reviews = {}
         for _, range in ipairs(batch) do
-            reviews[#reviews + 1] = { range = range,
-                pageReviews = { { review = { content = "layout thought", author = {} } } } }
+            if range ~= layout_omit then
+                reviews[#reviews + 1] = { range = range,
+                    pageReviews = { { review = { content = "layout thought", author = {} } } } }
+            end
         end
         return true, { reviews = reviews }
     end,
@@ -422,5 +425,47 @@ assert(missing_layout_thoughts == 0 and layout_redownloads == 2,
         .. tostring(missing_layout_thoughts) .. " redownloads=" .. tostring(layout_redownloads))
 assert(layout_store:get("layout", "source", "1"),
     "layout change resume did not commit the chapter source")
+
+-- After a layout change invalidates staging, thoughts persisted from the old
+-- layout must not survive when the fresh download no longer returns them.
+local stale_store = helper.new()
+layout_size, layout_omit = 2, nil
+local function stale_job()
+    return Sync:new({ store = stale_store, client = layout_client, book_id = "layout2",
+        chapters = { { chapterUid = "1" } } })
+end
+local stale_staged = stale_job()
+for _ = 1, 50 do
+    assert(stale_staged:step() ~= nil)
+    if stale_store:get("layout2", "thought", "1:1-1") then break end
+end
+stale_staged.cancelled = true
+assert(stale_store:get("layout2", "thought", "1:1-1"),
+    "fixture did not persist a thought before the layout change")
+layout_size, layout_omit = 6, "1-1"
+assert(finish(stale_job()))
+assert(not stale_store:get("layout2", "thought", "1:1-1"),
+    "a layout change re-download kept a thought the server no longer returns")
+
+-- A malformed gateway review (non-table author or pageReviews entry) must not
+-- pin the persist checkpoint and stall the chapter on every resume.
+local poison_client = {
+    get_chapter_underlines = function()
+        return true, { underlines = { { range = "1-1", markText = "poison" } } }
+    end,
+    build_chapter_review_batches = function(_self, ranges) return { ranges } end,
+    get_chapter_reviews_batch = function()
+        return true, { reviews = { { range = "1-1", pageReviews = {
+            42, { review = { content = "ok", author = 7 } } } } } }
+    end,
+}
+local poison_store = helper.new()
+local poison_done, poison_err = finish(Sync:new({ store = poison_store, client = poison_client,
+    book_id = "poison", chapters = { { chapterUid = "1" } } }))
+assert(poison_done, "a malformed review stalled the chapter: " .. tostring(poison_err))
+local poison_items = poison_store:get("poison", "thought", "1:1-1")
+assert(poison_items and #poison_items == 1 and poison_items[1].content == "ok"
+        and poison_items[1].author == "匿名",
+    "malformed pageReview entries were not degraded to a safe popup item")
 helper.cleanup()
 print("external_annotations_sync_spec: resume, cross-file reuse, empty updates and offline prefetch passed")

@@ -200,12 +200,14 @@ function Sync:run()
             if stage.batch_count and stage.batch_count ~= #batches then
                 -- The batch layout changed (for example a plugin upgrade
                 -- changed the gateway chunk size): batch-index checkpoints no
-                -- longer describe the stored raw batches, so drop the staging
-                -- data and download everything again.
+                -- longer describe the stored raw batches, and thoughts already
+                -- persisted under the old layout may no longer match the fresh
+                -- data, so drop both and download everything again.
                 stage.next_batch, stage.next_persist_batch, stage.next_persist_review = 1, nil, nil
                 stage.persisted_thoughts = nil
                 store:write(book_id, {
                     { kind = "batch", uid = uid },
+                    { kind = "thought", uid = uid },
                     { kind = "download", key = uid, uid = uid, value = stage },
                 })
             end

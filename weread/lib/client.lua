@@ -547,7 +547,7 @@ function Client:post_json(url, data, opts)
             ["Origin"] = "https://weread.qq.com",
             ["Referer"] = referer or "https://weread.qq.com/",
         }})
-    local text, code, resp_headers = self:request(req_opts)
+    local text, code, resp_headers, status = self:request(req_opts)
     if code and code >= 200 and code < 300 then
         return self:decode_http_json(text, {
             method = "POST",
@@ -557,7 +557,7 @@ function Client:post_json(url, data, opts)
             headers = resp_headers,
         }), code, resp_headers
     end
-    error(http_error(self, code, text, resp_headers))
+    error(http_error(self, code or status, text, resp_headers))
 end
 
 function Client:get_text(url, opts)

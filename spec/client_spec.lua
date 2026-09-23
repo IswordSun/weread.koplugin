@@ -457,7 +457,7 @@ adopt_client.json_decode = function() return { errCode = -2013, errMsg = "鉴权
 responses[#responses + 1] = {
     body = '{"errCode":-2013}',
     code = 200,
-    headers = { ["set-cookie"] = "wr_skey=replacement-key-12345; Path=/; HttpOnly" },
+    headers = { ["set-cookie"] = "wr_skey=XXX-replacement-key-12345; Path=/; HttpOnly" },
 }
 local adopted_ok, adopted_result = pcall(function()
     return adopt_client:renew_cookie()
@@ -467,7 +467,7 @@ expect(adopted_ok and type(adopted_result) == "table" and adopted_result.errCode
 expect(#adopt_settings.update_calls == 1
     and adopt_settings.update_calls[1].options.replace_cookies == true,
     "replacement credentials were not persisted atomically")
-expect(adopt_settings.values.cookies.wr_skey == "replacement-key-12345"
+expect(adopt_settings.values.cookies.wr_skey == "XXX-replacement-key-12345"
     and adopt_settings.values.cookies.wr_vid == "999",
     "replacement credentials did not merge into the credential set")
 expect(adopt_settings.values.session_generation == 3,
@@ -557,7 +557,7 @@ stale_client.json_decode = function() return { succ = 1 } end
 responses[#responses + 1] = {
     body = '{"succ":1}',
     code = 200,
-    headers = { ["set-cookie"] = "wr_skey=stale-replacement-12345; Path=/" },
+    headers = { ["set-cookie"] = "wr_skey=XXX-stale-replacement-12345; Path=/" },
 }
 local stale_ok, stale_result, stale_err = pcall(function()
     return stale_client:renew_cookie()
@@ -580,7 +580,7 @@ clear_client.json_decode = function() return { succ = 1 } end
 responses[#responses + 1] = {
     body = '{"succ":1}',
     code = 200,
-    headers = { ["set-cookie"] = "wr_skey=renewed-key-12345678; Path=/" },
+    headers = { ["set-cookie"] = "wr_skey=XXX-renewed-key-12345678; Path=/" },
 }
 local clear_ok = pcall(function() return clear_client:renew_cookie() end)
 expect(clear_ok, "successful renewal raised an error")

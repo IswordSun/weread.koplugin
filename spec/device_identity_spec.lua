@@ -35,20 +35,17 @@ expect(identity.fp == Crypto.sha256_hex("fixed-seed"),
     "fp must be the SHA-256 of the persistent seed")
 expect(#identity.fp == 64 and identity.fp:match("^%x+$") ~= nil,
     "fp must be 64 lowercase hex characters")
-expect(identity.device_id:match("^eink%d%d%d%d%d%d%d%d%d%d%d%d%d%d%d%d%d%d%d$") ~= nil,
-    "device_id must be eink plus 19 decimal digits")
-local derived = tonumber(identity.fp:sub(1, 12), 16)
-expect(identity.device_id == "eink" .. string.format("%019d", derived),
-    "device_id must derive from the first 12 hex digits of fp")
+expect(identity.device_id == nil,
+    "the unused device_id field must not be produced")
 expect(settings.flush_calls == 0,
     "an existing seed must not be rewritten or flushed")
 
 local again = DeviceIdentity.ensure(settings)
-expect(again.fp == identity.fp and again.device_id == identity.device_id,
+expect(again.fp == identity.fp,
     "identity must be stable across calls for one settings store")
 
 local other = DeviceIdentity.ensure(fake_settings("other-seed"))
-expect(other.fp ~= identity.fp and other.device_id ~= identity.device_id,
+expect(other.fp ~= identity.fp,
     "different seeds must produce different identities")
 
 local fresh = fake_settings("")

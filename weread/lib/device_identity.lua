@@ -5,7 +5,8 @@
 -- while sessions created without device identity replace each other (upstream
 -- issue #158). The fingerprint is a client-generated SHA-256 of a random seed;
 -- the seed is persisted in settings and survives account resets so a device
--- keeps its identity across accounts (mirrors the official `/device_id` file).
+-- keeps its identity across accounts (mirrors the official per-device identity
+-- persistence).
 --
 -- The seed is random device metadata, not a credential: it is never derived
 -- from user data and it reveals nothing about the account.
@@ -37,17 +38,6 @@ local function random_seed()
     return table.concat(parts)
 end
 
--- "eink" + 19-digit decimal derived from the fingerprint. The reference
--- implementation reduces `int(fp[:12], 16)` modulo 10^19; a 48-bit value is
--- always smaller than 10^19, so the reduction is a no-op kept for parity.
-local function derive_device_id(fp)
-    local value = tonumber(fp:sub(1, 12), 16)
-    if not value then
-        return "eink" .. string.rep("0", 19)
-    end
-    return "eink" .. string.format("%019d", value % (10 ^ 19))
-end
-
 function M.ensure(settings)
     local seed = settings:get("device_seed", "")
     if type(seed) ~= "string" or seed == "" then
@@ -55,10 +45,8 @@ function M.ensure(settings)
         settings:set("device_seed", seed)
         settings:flush()
     end
-    local fp = Crypto.sha256_hex(seed)
     return {
-        fp = fp,
-        device_id = derive_device_id(fp),
+        fp = Crypto.sha256_hex(seed),
     }
 end
 

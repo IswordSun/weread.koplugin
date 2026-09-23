@@ -6,16 +6,14 @@ Background
 A second QR login replaces the account's previous web session: the older
 session then fails with ``-2012`` ("登录超时") and its ``/web/login/renewal``
 returns ``-2013`` with an all-empty clearing ``Set-Cookie`` (upstream
-finlater/weread.koplugin issue #158; see ``verify_session_renewal.py`` and
-``verify_session_recovery.py``). Phase 1 tested a per-device User-Agent and was
-NEGATIVE (``verify_device_identity.py``). The last untested lever is the official
-e-ink login chain: ink.qq.com uses
+finlater/weread.koplugin issue #158). Earlier phases tested a per-device
+User-Agent and per-device identity variants; both were NEGATIVE. The last
+untested lever is the official e-ink login chain: ink.qq.com uses
 ``/web/login/{getuid,getinfo,weblogin,session/init}`` with an ``fp`` parameter
 and a 365-day ``wr_fp`` cookie, while the plugin flow
-(``/api/auth/getLoginUid`` + ``getLoginInfo``) carries no device identity. See
-``../04-weblogin-device-identity.md`` for the flow tables. Phase 2 (2026-09-23)
-CONFIRMED the hypothesis: two sessions logged in through this chain with
-different per-device ``fp`` coexisted (no mutual replacement).
+(``/api/auth/getLoginUid`` + ``getLoginInfo``) carries no device identity.
+Phase 2 (2026-09-23) CONFIRMED the hypothesis: two sessions logged in through
+this chain with different per-device ``fp`` coexisted (no mutual replacement).
 
 Experiment
 ----------
@@ -478,7 +476,7 @@ def poll_cookie_login(session: requests.Session, uid: str, otp: str = "") -> dic
 
 
 def wait_for_cookie_login(session: requests.Session, uid: str) -> dict[str, Any]:
-    """Current plugin flow, reused from verify_session_renewal.py."""
+    """Classic cookie-login baseline used for the coexistence comparison."""
     result = poll_cookie_login(session, uid)
     while result.get("succeed") is not True:
         logic_code = str(result.get("logicCode") or "")

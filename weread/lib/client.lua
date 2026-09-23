@@ -632,6 +632,19 @@ function Client:renew_cookie()
         persist_response_cookies = false,
     })
 
+    -- Stale-response guard: if another flow advanced the session while this
+    -- request was in flight, its older response must write nothing -- not even a
+    -- clearing Set-Cookie. Re-check before any branch mutates credentials.
+    local current_generation = tonumber(settings:get("session_generation", 0)) or 0
+    if current_generation ~= generation then
+        logger.err(
+            "ignoring stale cookie renewal response:",
+            "request_generation=", tostring(generation),
+            "current_generation=", tostring(current_generation)
+        )
+        return nil, "stale"
+    end
+
     local succeeded = WeRead.is_success_response(result)
     local set_cookie = header_value(resp_headers, "set-cookie")
     local replacement_token, has_cookie_replacement
@@ -663,19 +676,6 @@ function Client:renew_cookie()
             SessionState.mark_invalid(kind or "session_replaced")
             error("Cookie renewal response did not include succ=1")
         end
-    end
-
-    -- Stale-response guard: if another flow advanced the session while this
-    -- request was in flight, its older credentials must not replace the newer
-    -- session. Persist nothing and report the response as stale.
-    local current_generation = tonumber(settings:get("session_generation", 0)) or 0
-    if current_generation ~= generation then
-        logger.err(
-            "ignoring stale cookie renewal response:",
-            "request_generation=", tostring(generation),
-            "current_generation=", tostring(current_generation)
-        )
-        return nil, "stale"
     end
 
     local updates = {}

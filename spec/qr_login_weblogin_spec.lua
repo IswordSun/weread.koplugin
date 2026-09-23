@@ -52,6 +52,11 @@ local function fake_settings(seed)
         end,
         set = function(self, key, value) self.values[key] = value end,
         flush = function() end,
+        update_auth = function(self, credentials)
+            for key, value in pairs(credentials) do
+                self.values[key] = value
+            end
+        end,
     }
 end
 
@@ -145,7 +150,7 @@ chain_state.post_queue[2] = {
     headers = { ["Set-Cookie"] = "wr_ql=0; Path=/" },
 }
 local chain_result = chain_login:_resolve_ink_result(
-    { vid = 12345678, skey = "GETINFO_SKEY", code = 1001, pf = 2 }, "uid-1", "")
+    { vid = 12345678, skey = "GETINFO_SKEY", code = 1001, pf = 2 })
 expect(chain_result ~= nil and chain_result.succeed == true,
     "the weblogin chain must produce a completable login result")
 expect(chain_result.webLoginVid == "XXX-12345678" and chain_result.accessToken == "ACCESS"
@@ -179,33 +184,16 @@ expect(chain_login.login_cookies.wr_skey == "ACCESS"
     and chain_login.login_cookies.wr_vid == "XXX-12345678",
     "weblogin Set-Cookie credentials must be merged into the login jar")
 
--- Fallback: when weblogin yields no credentials, classic getLoginInfo completes.
+-- Weblogin failure: the resolver must fail fast with no cross-namespace classic attempt.
 local fallback_client, fallback_state = make_client()
 local fallback_login = new_login(fallback_client)
 fallback_state.post_queue[1] = { data = {}, headers = {} }
-fallback_state.http_queue[1] = {
-    decoded = { succeed = true, webLoginVid = "777",
-        accessToken = "CLASSIC", refreshToken = "CLASSIC_RT" },
-}
 local fallback_result = fallback_login:_resolve_ink_result(
-    { vid = 1, skey = "S", code = 2 }, "uid-fb", "")
-expect(fallback_result ~= nil and fallback_result.succeed == true,
-    "the classic fallback must complete the login")
-expect(fallback_result.webLoginVid == "777" and fallback_result.accessToken == "CLASSIC",
-    "the fallback result must come from getLoginInfo")
-expect(#fallback_state.get_requests == 1,
-    "the fallback must issue exactly one getLoginInfo request")
-expect(fallback_state.get_requests[1].url ==
-    "https://weread.qq.com/api/auth/getLoginInfo?uid=uid-fb&otp=",
-    "the fallback must use the classic getLoginInfo URL with otp")
-
--- Fallback also fails: the resolver must return nil (existing error path runs).
-local dead_client, dead_state = make_client()
-local dead_login = new_login(dead_client)
-dead_state.post_queue[1] = { data = {}, headers = {} }
-dead_state.http_queue[1] = { decoded = { succeed = false, logicCode = "PENDING" } }
-expect(dead_login:_resolve_ink_result({ vid = 1, skey = "S", code = 2 }, "uid-x", "") == nil,
-    "when both chains fail the resolver must return nil")
+    { vid = 1, skey = "S", code = 2 })
+expect(fallback_result == nil,
+    "a failed weblogin chain must not complete via a classic fallback")
+expect(#fallback_state.get_requests == 0,
+    "a failed weblogin chain must issue NO classic getLoginInfo request")
 
 -- Begin: the ink getuid is preferred and issues a JSON POST.
 local ink_client, ink_state = make_client()
@@ -254,5 +242,44 @@ poll_state.post_queue[1] = { raise = "timeout" }
 local pending = poll_login:_poll_ink("uid-1", "")
 expect(pending.transport_pending == true,
     "a timed-out long poll must be reported as pending")
+
+-- A non-table 2xx body must be rejected before _poll can index it.
+poll_state.post_queue[1] = { data = 123 }
+local scalar_ok, scalar_err = pcall(function() return poll_login:_poll_ink("uid-1", "") end)
+expect(not scalar_ok and tostring(scalar_err):find("invalid JSON response", 1, true) ~= nil,
+    "a non-table getinfo response must be rejected as invalid JSON")
+
+-- Completion bumps session_generation so an in-flight renewal cannot overwrite it.
+local gen_client, gen_state = make_client()
+local gen_settings = fake_settings("gen-seed")
+gen_settings.values.session_generation = 4
+local gen_login = new_login(gen_client, gen_settings)
+gen_state.http_queue[1] = { decoded = { name = "Alice" } }
+gen_state.http_queue[2] = { decoded = { apikey = "KEY" } }
+local gen_account = gen_login:_complete_protocol({
+    succeed = true, webLoginVid = "vid-9", accessToken = "tok-9", refreshToken = "rt-9",
+}, gen_login.generation)
+expect(gen_account ~= nil and gen_account.user_vid == "vid-9",
+    "a fresh completion returns the account")
+expect(gen_settings.values.session_generation == 5,
+    "QR login must bump session_generation so stale renewals are rejected")
+
+-- A stale completion must not persist anything.
+local stale_client, stale_state = make_client()
+local stale_settings = fake_settings("stale-seed")
+local stale_login = new_login(stale_client, stale_settings)
+stale_state.http_queue[1] = { decoded = { name = "Alice" } }
+stale_state.http_queue[2] = { decoded = { apikey = "KEY" } }
+local stale_generation = stale_login.generation
+stale_login:cancel()
+local stale_ok, stale_err = pcall(function()
+    return stale_login:_complete_protocol({
+        succeed = true, webLoginVid = "vid-9", accessToken = "tok-9",
+    }, stale_generation)
+end)
+expect(not stale_ok and tostring(stale_err):find("cancelled", 1, true) ~= nil,
+    "a stale completion must be rejected")
+expect(stale_settings.values.api_key == nil,
+    "a stale completion must not persist the API key")
 
 print(("qr_login_weblogin_spec: %d checks"):format(checks))

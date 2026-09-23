@@ -98,10 +98,13 @@ Weblogin chain (preferred; gives the session a per-device identity):
    SHA-256 fingerprint of a persistent random seed; distinct `fp` values let
    sessions coexist across devices instead of replacing each other.
 
-Classic fallback chain (used when the weblogin chain cannot start or cannot
-yield credentials): `GET /api/auth/getLoginUid`, then
+Classic chain (fallback only when the ink entry `/web/login/getuid` is
+unavailable): `GET /api/auth/getLoginUid`, then
 `GET /api/auth/getLoginInfo?uid=<uid>&otp=<otp>` — the original plugin flow,
-unchanged.
+unchanged. Its `uid` namespace is separate from the ink one, so the two are
+never mixed: if the weblogin chain starts but credential issuance is rejected,
+the login fails with a retry prompt and no cross-namespace classic attempt is
+made. Validated with `scripts/verify_weblogin_identity.py`.
 
 ## 2. Official Skill Interfaces
 

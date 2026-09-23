@@ -89,6 +89,15 @@ local function response_body(result)
     return result
 end
 
+-- Kinds that mean the server no longer accepts the session even though its
+-- cookies exist locally. Mirrors SESSION_ERRORS in weread/lib/client.lua so the
+-- read-report outcome classification cannot drift from the auth classifier.
+local AUTHENTICATION_ERROR_KINDS = {
+    session_replaced = true,
+    credential_invalid = true,
+    login_timeout = true,
+}
+
 -- A replaced session must surface as an authentication failure rather than a
 -- generic server rejection. Only known codes classify; unknown codes return nil.
 local function response_auth_kind(client, result)
@@ -872,7 +881,7 @@ function ReadReport:_run_pipeline(book_id, opts)
     if not opts.allow_renewal then
         local kind = response_auth_kind(self.client, last_result)
         outcome.error = failure
-        outcome.error_kind = kind == "session_replaced" and "authentication" or "server"
+        outcome.error_kind = AUTHENTICATION_ERROR_KINDS[kind] and "authentication" or "server"
         outcome.error_prefix = "read report server rejected:"
         return outcome
     end
@@ -917,7 +926,7 @@ function ReadReport:_run_pipeline(book_id, opts)
         or tostring(final_result))
     local final_kind = response_auth_kind(self.client, final_result)
     outcome.error_kind = final_ok
-        and (final_kind == "session_replaced" and "authentication" or "server")
+        and (AUTHENTICATION_ERROR_KINDS[final_kind] and "authentication" or "server")
         or "transport"
     outcome.error_prefix = "read report final retry failed:"
     return outcome

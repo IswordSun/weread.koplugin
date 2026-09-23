@@ -340,6 +340,9 @@ function QRLogin:_poll_ink(uid, otp)
         end
         error(request_error)
     end
+    if type(data) ~= "table" then
+        error("WeRead returned an invalid JSON response")
+    end
     self.login_cookies = merge_response_cookies(self.login_cookies, response_headers)
     return data
 end
@@ -481,25 +484,14 @@ function QRLogin:_run_weblogin_chain(getinfo, identity)
     }
 end
 
-function QRLogin:_classic_fallback_result(uid, otp)
-    local ok, result = pcall(function()
-        return self:_poll_protocol(uid, otp or "")
-    end)
-    if ok and type(result) == "table" and result.succeed == true then
-        return result
-    end
-    logger.warn("classic login fallback did not succeed")
-    return nil
-end
-
-function QRLogin:_resolve_ink_result(getinfo, uid, otp)
+function QRLogin:_resolve_ink_result(getinfo)
     local identity = DeviceIdentity.ensure(self.settings)
     local result = self:_run_weblogin_chain(getinfo, identity)
     if result then
         return result
     end
-    logger.warn("weblogin completion failed; falling back to the classic login chain")
-    return self:_classic_fallback_result(uid, otp)
+    logger.warn("weblogin credential issuance failed; login cannot continue")
+    return nil
 end
 
 function QRLogin:_complete_protocol(login_result, generation)
@@ -566,12 +558,14 @@ function QRLogin:_complete_protocol(login_result, generation)
         login_method = "qr",
         login_time = os.time(),
     }
+    local session_generation = tonumber(self.settings:get("session_generation", 0)) or 0
     self.settings:update_auth({
         cookies = cookies,
         api_key = api_key,
         wr_ticket = "",
         wr_wrpa = "",
         account = account,
+        session_generation = session_generation + 1,
     }, { replace_cookies = true })
     SessionState.clear()
     if self.host.onWeReadAccountChanged then
@@ -713,7 +707,7 @@ function QRLogin:_poll(uid, generation, otp)
         if ink_login_payload(result) then
             self:_close_qr_dialog(true)
             self:_complete(nil, generation, function()
-                return self:_resolve_ink_result(result, uid, otp or "")
+                return self:_resolve_ink_result(result)
             end)
             return
         end
@@ -822,7 +816,7 @@ function QRLogin:_show_otp(uid, generation, error_message)
                             elseif self.login_mode == "ink" then
                                 if ink_login_payload(result) then
                                     self:_complete(nil, generation, function()
-                                        return self:_resolve_ink_result(result, uid, otp)
+                                        return self:_resolve_ink_result(result)
                                     end)
                                 else
                                     local kind = ink_logic_kind(result)

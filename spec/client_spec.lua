@@ -568,6 +568,45 @@ expect(#stale_settings.update_calls == 0
     and stale_settings.values.cookies.wr_skey == "old-key-12345678",
     "stale renewal overwrote or mutated credentials")
 
+-- A stale clearing rejection must write nothing, not even the clearing Set-Cookie.
+local stale_clear_settings = new_renew_settings({
+    cookies = { wr_skey = "old-key-12345678", wr_vid = "old-vid", wr_rt = "old-refresh" },
+})
+local stale_clear_reads = { 7, 8 }
+stale_clear_settings.get = function(self, key, default)
+    if key == "session_generation" then
+        local value = table.remove(stale_clear_reads, 1)
+        if value == nil then return default end
+        return value
+    end
+    local value = self.values[key]
+    if value == nil then return default end
+    return value
+end
+local stale_clear_client = Client:new(stale_clear_settings)
+stale_clear_client.json_encode = function() return "{}" end
+stale_clear_client.json_decode = function() return { errCode = -2013, errMsg = "鉴权失败" } end
+responses[#responses + 1] = {
+    body = '{"errCode":-2013}',
+    code = 200,
+    headers = { ["set-cookie"] = {
+        "wr_skey=; Path=/; Domain=.weread.qq.com",
+        "wr_vid=; Path=/; Domain=.weread.qq.com",
+        "wr_rt=; Path=/; Domain=.weread.qq.com",
+    } },
+}
+local clear_stale_ok, clear_stale_result, clear_stale_err = pcall(function()
+    return stale_clear_client:renew_cookie()
+end)
+expect(clear_stale_ok and clear_stale_result == nil and clear_stale_err == "stale",
+    "a stale clearing rejection must be ignored as stale")
+expect(#stale_clear_settings.update_calls == 0,
+    "a stale clearing rejection must not write credentials")
+expect(stale_clear_settings.values.cookies.wr_skey == "old-key-12345678"
+    and stale_clear_settings.values.cookies.wr_vid == "old-vid"
+    and stale_clear_settings.values.cookies.wr_rt == "old-refresh",
+    "a stale clearing rejection must leave credentials intact")
+
 -- A successful renewal clears a session that was marked invalid.
 SessionState.mark_invalid("login_timeout")
 local clear_settings = new_renew_settings({

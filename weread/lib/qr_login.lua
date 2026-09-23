@@ -208,7 +208,13 @@ function QRLogin:_post_login_json(url, payload, headers, timeout)
         })
     end) }
     if not call[1] then
-        return nil, nil, error_text(call[2] or "request failed")
+        local message = error_text(call[2] or "request failed")
+        if message:lower():find("http nil", 1, true) then
+            -- No HTTP response = transport failure; pollers retry on this
+            -- marker (mirrors the classic _request_json "request failed" path).
+            return nil, nil, "request failed"
+        end
+        return nil, nil, message
     end
     return call[2], call[4] or {}, nil
 end

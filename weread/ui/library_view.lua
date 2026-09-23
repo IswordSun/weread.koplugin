@@ -94,6 +94,9 @@ function RoundedCoverCard:free(...)
     if self.inner and self.inner.free then self.inner:free(...) end
 end
 
+-- Plain Widget wrappers do not forward CloseWidget to their owned content.
+RoundedCoverCard.onCloseWidget = RoundedCoverCard.free
+
 function RoundedCoverCard:_masked_corner_color(px, py)
     if self.shadow_color
         and inside_rounded_rect(px - self.shadow_offset, py - self.shadow_offset,
@@ -160,6 +163,8 @@ end
 function FinishedBadge:free(...)
     if self.label and self.label.free then self.label:free(...) end
 end
+
+FinishedBadge.onCloseWidget = FinishedBadge.free
 
 -- WeRead marks private reading with a black corner pennant and a white mask.
 -- The badge honours the cover's rounded silhouette, so it does not square off
@@ -284,6 +289,8 @@ end
 function LeftAlignedTitle:free(...)
     if self.content and self.content.free then self.content:free(...) end
 end
+
+LeftAlignedTitle.onCloseWidget = LeftAlignedTitle.free
 
 local function build_center_cropped_cover(path, width, height)
     -- Keep image preparation independent from ImageWidget's "fit" and
@@ -693,11 +700,12 @@ function LibraryView:headerBar()
     local size = Screen:scaleBySize(HEADER_SIZE)
     local title = self.mode == "public_account" and _("Public Accounts")
         or T(_("Books · %1"), self.group_label or _("All"))
-    local function button(text, icon, width, callback, align, icon_file)
+    local function button(text, icon, width, callback, align, icon_file, max_width)
         local widget = Button:new{
-            text = text, icon = icon, width = width, height = size,
+            text = text, icon = icon, width = width, max_width = max_width, height = size,
             icon_width = Screen:scaleBySize(36), icon_height = Screen:scaleBySize(36),
             padding = 0, radius = 0, margin = 0, bordersize = 0,
+            padding_h = max_width and Screen:scaleBySize(6) or 0,
             text_font_size = 24, align = align or "center",
             avoid_text_truncation = false, show_parent = self,
             callback = after_tap(callback),
@@ -712,8 +720,9 @@ function LibraryView:headerBar()
         return widget
     end
     local back = button(nil, "chevron.left", size, function() self:onClose() end)
-    local location = button(title .. " ▾", nil, self.screen_w - 4 * size,
-        function() self:showSourceMenu() end, "left")
+    local location_width = self.screen_w - 4 * size
+    local location = button(title .. " ▾", nil, nil,
+        function() self:showSourceMenu() end, "left", nil, location_width)
     local search = button(nil, "appbar.search", size,
         function() if self.on_search then self.on_search() end end, nil, "shelf-search.svg")
     self.refresh_button = button(nil, "appbar.search", size,
@@ -722,7 +731,9 @@ function LibraryView:headerBar()
     self._header_buttons = { back, location, search, self.refresh_button, menu }
     return VerticalGroup:new{
         align = "left",
-        HorizontalGroup:new{ back, location, search, self.refresh_button, menu },
+        HorizontalGroup:new{ back, location,
+            HorizontalSpan:new{ width = math.max(0, location_width - location:getSize().w) },
+            search, self.refresh_button, menu },
         LineWidget:new{ dimen = Geom:new{ w = self.screen_w, h = Size.border.thin } },
     }
 end

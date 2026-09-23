@@ -9,9 +9,12 @@ function Widget:new(args)
     local widget = self:extend(args)
     widget.key_events, widget.ges_events, widget.selected = {}, {}, { x = 1, y = 1 }
     if widget.kind == "button" then
-        widget.height = widget.height or scale(30) + 2 * (widget.padding or 0)
+        widget.height = (widget.height or scale(30)) + 2 * (widget.padding or 0) + 2 * (widget.bordersize or 0)
         assert(widget.width > 0 and widget.height > 0)
         live_buttons = live_buttons + 1; max_buttons = math.max(max_buttons, live_buttons)
+        widget.label_widget = Widget:new{ kind = "text", max_width = widget.width }
+        widget.label_container = Widget:new{ kind = "center", widget.label_widget }
+        widget[1] = widget.label_container
     end
     if widget.init then widget:init() end
     return widget
@@ -34,7 +37,7 @@ function Widget:getSize()
         elseif self.kind == "vertical" then w, h = math.max(w, size.w), h + size.h
         else w, h = math.max(w, size.w), math.max(h, size.h) end
     end
-    local padding = self.padding or 0
+    local padding = (self.padding or 0) + (self.bordersize or 0)
     local size = { w = w + 2 * padding, h = h + 2 * padding }
     if group then self._size = size end
     return size
@@ -61,6 +64,7 @@ local kinds = {
     ["horizontalgroup"] = "horizontal", ["verticalgroup"] = "vertical",
     ["horizontalspan"] = "hspan", ["verticalspan"] = "vspan", ["linewidget"] = "line",
     ["textwidget"] = "text", ["titlebar"] = "title", ["container/centercontainer"] = "center",
+    ["container/leftcontainer"] = "left",
 }
 for name, kind in pairs(kinds) do
     package.preload["ui/widget/" .. name] = function() return Widget:extend{ kind = kind } end
@@ -69,29 +73,6 @@ package.preload["ui/size"] = function()
     return { line = { medium = scale(1) }, padding = { buttontable = scale(6),
         large = scale(10), button = scale(5) }, span = { vertical_default = scale(5) } }
 end
-package.preload["ui/widget/buttontable"] = function()
-    local Bar = Widget:extend{}
-    function Bar:init()
-        local Button = require("ui/widget/button")
-        local Horizontal = require("ui/widget/horizontalgroup")
-        local Vertical = require("ui/widget/verticalgroup")
-        local Span = require("ui/widget/verticalspan")
-        local Line = require("ui/widget/linewidget")
-        local sep = scale(1)
-        local row = Horizontal:new{}
-        self.buttons_layout = { {} }
-        for index, entry in ipairs(self.buttons[1]) do
-            local button = Button:new{ text = entry.text, callback = entry.callback, enabled = entry.enabled,
-                width = math.floor((self.width - sep * (#self.buttons[1] - 1)) / #self.buttons[1]), padding = scale(6) }
-            row[#row + 1] = button
-            self.buttons_layout[1][index] = button
-            if index < #self.buttons[1] then row[#row + 1] = Line:new{ dimen = { w = sep, h = button:getSize().h } } end
-        end
-        self[1] = Vertical:new{ Line:new{ dimen = { w = self.width, h = sep } },
-            Span:new{ width = scale(5) }, row, Span:new{ width = scale(5) } }
-    end
-    return Bar
-end
 -- Optional device smoke test: use the installed KOReader layout groups, with
 -- inert leaf widgets. No framebuffer, input device, settings or book is opened.
 local group_root = os.getenv("KOREADER_GROUP_DIR")
@@ -99,7 +80,7 @@ if group_root then
     package.preload["ui/bidi"] = function() return { mirroredUILayout = function() return false end } end
     package.preload["util"] = function() return {} end
     package.preload["ui/widget/container/widgetcontainer"] = function() return Widget end
-    for _, name in ipairs({ "verticalgroup", "horizontalgroup", "buttontable" }) do
+    for _, name in ipairs({ "verticalgroup", "horizontalgroup" }) do
         package.preload["ui/widget/" .. name] = function()
             return assert(loadfile(group_root .. "/ui/widget/" .. name .. ".lua"))()
         end
@@ -122,10 +103,12 @@ package.preload["weread.ui.focus_nav"] = function()
     end }
 end
 package.preload["weread.lib.plugin_util"] = function()
-    return { tr = function(s) return s end, T = function(s, n) return (s:gsub("%%1", tostring(n))) end }
+    return { tr = function(s) return s end, T = function(s, ...) local values = {...}
+        return (s:gsub("%%(%d+)", function(index) return tostring(values[tonumber(index)]) end)) end }
 end
 package.preload["ui/uimanager"] = function()
-    return { setDirty = function(_, widget) if widget and widget[1] then widget[1]:paintTo({}, 0, 0) end end,
+    return { nextTick = function(_, callback) callback() end,
+        setDirty = function(_, widget) if widget and widget[1] then widget[1]:paintTo({}, 0, 0) end end,
         show = function(_, widget) widget[1]:paintTo({}, 0, 0) end,
         close = function(_, widget) widget[1]:free(); widget:onCloseWidget() end }
 end
@@ -159,8 +142,11 @@ for _, size in ipairs({ { 600, 800 }, { 1072, 1448 }, { 800, 600 } }) do
     view.layout[1][1].callback() -- parent selects only its own chapter
     view.layout[2][1].callback()
     assert(model.count == 2 and #model:visible() == 2000)
-    assert(view.actions.zero_sep and #view.actions.buttons_layout[1] == 1)
-    view.layout[#view.layout][1].callback()
+    assert(view.action_button:getSize().h == scale(64), "fetch target is too small")
+    assert(view.body[2] == view.actions and view.layout[#view.layout - 1][1] == view.action_button,
+        "fetch action must precede the bottom pagination in paint and keyboard order")
+    assert(view.layout[#view.layout][1].text == "Previous" and view.layout[#view.layout][3].text == "Next")
+    view.action_button.callback()
     assert(chosen and #chosen == 2 and chosen[1] == chapters[1] and chosen[2] == chapters[2])
     assert(live_buttons == 0, "closing picker retained native widget resources")
 end
@@ -190,5 +176,27 @@ assert(model.count == 2, "retrieved rows cannot be selected again")
 view.layout[2][3].callback()
 assert(view.page == page and view.model.count == 1 and not view.layout[2][1].enabled,
     "editing lost the page/other selections or retained an unmatched selection")
+view:onClose(); assert(live_buttons == 0)
+-- The chooser uses one two-line button per visible candidate and starts on
+-- the current match. Occupied entries never become selectable.
+local choices = {}
+for index = 1, 1000 do
+    choices[index] = { text = "Remote " .. index, detail = "Local: Chapter " .. index,
+        status = "Already linked", select_enabled = false, current = index == 20 }
+end
+choices[20].select_enabled = true
+local saved, removed
+choices[20].callback = function() saved = 20 end
+view = Picker.show{ choices = choices, local_title = "Current local chapter",
+    on_remove = function() removed = true end }
+assert(view.page == math.ceil(20 / view.per_page))
+assert(view[1]:getSize().h == height and live_buttons == math.min(view.per_page, #choices) + 4)
+local chosen_row = view.layout[(20 - 1) % view.per_page + 1][1]
+assert(chosen_row.enabled and not view.layout[1][1].enabled)
+chosen_row.callback(); assert(saved == 20)
+local initial = live_buttons
+view:onNextPage(); view:onPrevPage()
+assert(live_buttons == initial, "chooser kept old page widgets")
+view.action_button.callback(); assert(removed)
 view:onClose(); assert(live_buttons == 0)
 print("annotation_chapter_picker_spec: independent selection, editing, geometry and bounded widgets passed; peak=" .. max_buttons)

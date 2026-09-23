@@ -136,7 +136,7 @@ local expected_fp = Crypto.sha256_hex("ink-seed")
 chain_state.post_queue[1] = {
     data = { accessToken = "ACCESS", refreshToken = "REFRESH", vid = 12345678 },
     headers = {
-        ["Set-Cookie"] = "wr_pf=2; Path=/; wr_vid=12345678; Path=/; "
+        ["Set-Cookie"] = "wr_pf=2; Path=/; wr_vid=XXX-12345678; Path=/; "
             .. "wr_skey=ACCESS; Path=/; wr_rt=REFRESH; Path=/",
     },
 }
@@ -148,7 +148,7 @@ local chain_result = chain_login:_resolve_ink_result(
     { vid = 12345678, skey = "GETINFO_SKEY", code = 1001, pf = 2 }, "uid-1", "")
 expect(chain_result ~= nil and chain_result.succeed == true,
     "the weblogin chain must produce a completable login result")
-expect(chain_result.webLoginVid == "12345678" and chain_result.accessToken == "ACCESS"
+expect(chain_result.webLoginVid == "XXX-12345678" and chain_result.accessToken == "ACCESS"
     and chain_result.refreshToken == "REFRESH",
     "the login result must carry vid/accessToken/refreshToken")
 expect(#chain_state.posts == 2, "the chain must issue exactly weblogin then session/init")
@@ -176,7 +176,7 @@ expect(init_body.vid == "12345678" and init_body.skey == "ACCESS" and init_body.
 expect(chain_login.login_cookies.wr_fp == expected_fp,
     "wr_fp must be installed on the login jar")
 expect(chain_login.login_cookies.wr_skey == "ACCESS"
-    and chain_login.login_cookies.wr_vid == "12345678",
+    and chain_login.login_cookies.wr_vid == "XXX-12345678",
     "weblogin Set-Cookie credentials must be merged into the login jar")
 
 -- Fallback: when weblogin yields no credentials, classic getLoginInfo completes.

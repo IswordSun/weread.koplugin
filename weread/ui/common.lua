@@ -16,6 +16,9 @@ local unpack_args = PluginUtil.unpack_args
 
 local M = {}
 
+local SESSION_RECOVERY_COOLDOWN_SECONDS = 60
+M.last_session_recovery_at = 0
+
 function M:safeCallback(label, callback)
     return function(...)
         local args = { ... }
@@ -180,12 +183,44 @@ function M:showList(title, items, empty_text, options)
     return menu
 end
 
+function M:recoverSession()
+    local now = os.time()
+    if now - M.last_session_recovery_at < SESSION_RECOVERY_COOLDOWN_SECONDS then
+        return false
+    end
+    if not self:isNetworkConnected() then
+        return false
+    end
+    M.last_session_recovery_at = now
+    self:runOnlineTask(_("Restoring WeRead session..."), function()
+        local ok = pcall(function()
+            return self.client:renew_cookie()
+        end)
+        if ok and not SessionState.is_invalid() then
+            self:showTransientInfo(_("WeRead session restored. Please try again."), 2)
+            return
+        end
+        if SessionState.should_notify() then
+            SessionState.mark_notified()
+            self:showTransientInfo(
+                _("WeRead session has expired. Please scan the QR code again."), 2)
+            UIManager:scheduleIn(0.2, function()
+                self.qr_login:start()
+            end)
+        end
+    end)
+    return true
+end
+
 function M:requireLogin(require_cookie, require_api_key)
     local missing_cookie = require_cookie and not self.settings:is_cookie_configured()
     local missing_api_key = require_api_key and not self.settings:is_api_configured()
     if not missing_cookie and not missing_api_key then
         if not (require_cookie and SessionState.is_invalid()) then
             return true
+        end
+        if self:recoverSession() then
+            return false
         end
         if SessionState.should_notify() then
             SessionState.mark_notified()

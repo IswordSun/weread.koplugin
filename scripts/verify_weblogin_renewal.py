@@ -114,9 +114,9 @@ def main() -> int:
     access = lab.scalar_text(CAPTURED.get("access", ""))
     refresh = lab.scalar_text(CAPTURED.get("refresh", ""))
     print(f"[R2] login tokens: accessToken={described(access)}; refreshToken={described(refresh)}\n"
-          f"[R2] cookie vs token equality: wr_skey==accessToken: {same(cookies.get('wr_skey', ''), access)}; "
-          f"wr_rt==refreshToken: {same(cookies.get('wr_rt', ''), refresh)}; "
-          f"wr_skey==skey_from_getinfo: {same(cookies.get('wr_skey', ''), lab.scalar_text(CAPTURED.get('skey_login', '')))}\n"
+          f"[R2] cookie vs token equality: wr_skey equals accessToken: {same(cookies.get('wr_skey', ''), access)}; "
+          f"wr_rt equals refreshToken: {same(cookies.get('wr_rt', ''), refresh)}; "
+          f"wr_skey equals getinfo skey: {same(cookies.get('wr_skey', ''), lab.scalar_text(CAPTURED.get('skey_login', '')))}\n"
           f"[R2] cookie presence: {lab.describe_cookies(cookies)}\n", flush=True)
 
     if not access:

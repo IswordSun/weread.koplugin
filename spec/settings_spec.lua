@@ -174,6 +174,17 @@ settings:update_auth({ session_generation = 7 })
 expect(values.session_generation == 7,
     "session generation was not persisted through update_auth")
 
+settings:update_auth({
+    access_token = "access-value",
+    refresh_token = "refresh-value",
+    last_session_renewal_at = 1234567,
+})
+expect(values.access_token == "access-value"
+    and values.refresh_token == "refresh-value",
+    "session tokens were not persisted through update_auth")
+expect(values.last_session_renewal_at == 1234567,
+    "session renewal timestamp was not persisted through update_auth")
+
 settings:set("device_seed", "device-seed-value")
 settings:reset_account()
 expect(values.api_key == "" and next(values.cookies) == nil
@@ -181,6 +192,9 @@ expect(values.api_key == "" and next(values.cookies) == nil
     "account reset left credentials behind")
 expect(values.session_generation == 0,
     "account reset left session generation behind")
+expect(values.access_token == "" and values.refresh_token == ""
+    and values.last_session_renewal_at == 0,
+    "account reset left session tokens behind")
 expect(values.device_seed == "device-seed-value",
     "account reset must preserve the device identity seed")
 

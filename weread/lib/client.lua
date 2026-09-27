@@ -775,18 +775,25 @@ function Client:renew_via_session_init()
 end
 
 function Client:renew_with_fallback()
-    local token_ok = pcall(function()
-        return self:renew_via_session_init()
-    end)
-    if token_ok then
-        return true, "session/init"
-    end
-    local web_ok = pcall(function()
+    -- The web renewal is the proven-effective path (verified on-device: it
+    -- restores an expired session). The token exchange through session/init
+    -- answers success even while the web session stays invalid, so it must
+    -- never run first or its false success would mask the real recovery.
+    local web_ok, web_err = pcall(function()
         return self:renew_cookie()
     end)
     if web_ok then
         return true, "renewal"
     end
+    local token_ok, token_err = pcall(function()
+        return self:renew_via_session_init()
+    end)
+    if token_ok then
+        return true, "session/init"
+    end
+    logger.err("session renewal failed:",
+        "renewal=", tostring(web_err),
+        "session_init=", tostring(token_err))
     return false
 end
 

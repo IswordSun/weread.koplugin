@@ -697,9 +697,9 @@ test("an expired session is renewed once and the pull retried", function()
         end
         return remote
     end
-    f.sync.client.renew_cookie = function()
+    f.sync.client.renew_with_fallback = function()
         renewals = renewals + 1
-        return { succ = 1 }
+        return true, "session/init"
     end
     f.sync:on_reader_ready()
     f.drain()
@@ -720,9 +720,9 @@ test("a refused renewal keeps the pull failed without retrying", function()
     f.sync.client.get_web_progress = function()
         return auth_failure
     end
-    f.sync.client.renew_cookie = function()
+    f.sync.client.renew_with_fallback = function()
         renewals = renewals + 1
-        error("Cookie renewal response did not include succ=1")
+        return false
     end
     f.sync:on_reader_ready()
     f.drain()

@@ -18,6 +18,7 @@ local unpack_args = PluginUtil.unpack_args
 local M = {}
 
 local SESSION_RECOVERY_COOLDOWN_SECONDS = 60
+local SESSION_KEEPALIVE_INTERVAL_SECONDS = 60 * 60
 M.last_session_recovery_at = 0
 
 function M:safeCallback(label, callback)
@@ -204,10 +205,10 @@ function M:recoverSession()
     end
     M.last_session_recovery_at = now
     self:runOnlineTask(_("Restoring WeRead session..."), function()
-        local ok = pcall(function()
-            return self.client:renew_cookie()
+        local call_ok, renewed = pcall(function()
+            return self.client:renew_with_fallback()
         end)
-        if ok and not SessionState.is_invalid() then
+        if call_ok and renewed and not SessionState.is_invalid() then
             self:showTransientInfo(_("WeRead session restored. Please try again."), 2)
             return
         end
@@ -220,6 +221,28 @@ function M:recoverSession()
             end)
         end
     end)
+    return true
+end
+
+function M:maybeKeepAliveSession()
+    if not self.settings or not self.settings:is_cookie_configured() then
+        return false
+    end
+    if not self:isNetworkConnected() then
+        return false
+    end
+    local last = tonumber(self.settings:get("last_session_renewal_at", 0)) or 0
+    if os.time() - last < SESSION_KEEPALIVE_INTERVAL_SECONDS then
+        return false
+    end
+    self:runOnlineTask(_("Refreshing WeRead session..."), function()
+        local call_ok, renewed = pcall(function()
+            return self.client:renew_with_fallback()
+        end)
+        if call_ok and renewed then
+            logger.info("session keep-alive refreshed the WeRead session")
+        end
+    end, nil, { silent_offline = true })
     return true
 end
 

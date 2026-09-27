@@ -82,10 +82,10 @@ local recovery_host = setmetatable({
         is_api_configured = function() return true end,
     },
     client = {
-        renew_cookie = function()
+        renew_with_fallback = function()
             renewals = renewals + 1
             SessionState.clear()
-            return { succ = 1 }
+            return true, "session/init"
         end,
     },
     qr_login = {
@@ -109,9 +109,9 @@ eq(transient_messages[1], "WeRead session restored. Please try again.",
 
 Common.last_session_recovery_at = 0
 SessionState.mark_invalid("login_timeout")
-recovery_host.client.renew_cookie = function()
+recovery_host.client.renew_with_fallback = function()
     renewals = renewals + 1
-    error("Cookie renewal response did not include succ=1")
+    return false
 end
 eq(recovery_host:requireLogin(true, true), false,
     "failed recovery still blocks the gated action")
@@ -120,5 +120,27 @@ eq(SessionState.is_invalid(), true, "failed recovery keeps the session invalid")
 eq(qr_starts, 1, "failed recovery falls back to the scan prompt")
 eq(transient_messages[2], "WeRead session has expired. Please scan the QR code again.",
     "fallback prompt asks for a new scan")
+
+local renewal_clock = 0
+recovery_host.settings.get = function(_self, key, default)
+    if key == "last_session_renewal_at" then return renewal_clock end
+    return default
+end
+recovery_host.client.renew_with_fallback = function()
+    renewals = renewals + 1
+    return true, "session/init"
+end
+SessionState.clear()
+eq(recovery_host:maybeKeepAliveSession(), true,
+    "a stale renewal timestamp starts the keep-alive")
+eq(renewals, 3, "keep-alive renewed the session")
+renewal_clock = os.time()
+eq(recovery_host:maybeKeepAliveSession(), false,
+    "a fresh renewal timestamp skips the keep-alive")
+eq(renewals, 3, "fresh session does not renew again")
+recovery_host.settings.is_cookie_configured = function() return false end
+eq(recovery_host:maybeKeepAliveSession(), false,
+    "missing cookie configuration skips the keep-alive")
+recovery_host.settings.is_cookie_configured = function() return true end
 
 print(string.format("common_network_spec: %d checks", checks))

@@ -287,6 +287,7 @@ local zh = {
     ["WeRead cookie renewed."] = "微信读书 Cookie 已续期。",
     ["WeRead session has expired. Please scan the QR code again."] = "微信读书登录已失效，请重新扫码登录。",
 ["Restoring WeRead session..."] = "正在恢复微信读书登录…",
+["Refreshing WeRead session..."] = "正在刷新微信读书登录…",
 ["WeRead session restored. Please try again."] = "微信读书登录已恢复，请重试。",
     ["configured"] = "已配置",
     ["missing"] = "缺失",

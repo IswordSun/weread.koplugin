@@ -218,6 +218,9 @@ function WeReadPlugin:init()
     end
     self._reader_session_gen = 0
     self.updater:schedule_auto_check()
+    if self.maybeKeepAliveSession then
+        self:maybeKeepAliveSession()
+    end
     logger.info("initialized:", "version=", self.version)
     updater:cleanup_backup()
 end

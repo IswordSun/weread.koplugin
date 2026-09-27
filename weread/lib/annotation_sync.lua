@@ -8,6 +8,10 @@ local Sync = {}
 Sync.__index = Sync
 Sync.NETWORK_REQUIRED = "annotation_network_required"
 Sync.PERSISTENCE_VERSION = 1
+-- A single pathological chapter must not block the whole-book sync: bound its
+-- whole-book fallback calls and abort its matching after this much CPU.
+Sync.CHAPTER_BUDGET = 60
+Sync.MAX_CHAPTER_FALLBACKS = 4
 
 -- Gateway batches normally contain 30 ranges. Keep the local write path
 -- bounded too, in case a future endpoint response is larger than expected.
@@ -156,7 +160,8 @@ function Sync:run()
             if not self.document or (status
                 and status.revision == source_status.revision
                 and status.matcher_version == External.MATCHER_VERSION
-                and status.range_key == range_key) then
+                and status.range_key == range_key
+                and not status.aborted) then
                 if self.perf then self.perf("chapter_cached", started, "chapter_uid=", uid) end
                 self.completed = self.completed + 1
                 self:yield("saved")
@@ -355,10 +360,25 @@ function Sync:run()
                     chapter_ranges = self.ranges,
                     resume = saved,
                     include_items = false,
+                    max_fallbacks = self.max_chapter_fallbacks or Sync.MAX_CHAPTER_FALLBACKS,
+                    chapter_budget = self.chapter_budget or Sync.CHAPTER_BUDGET,
+                    walk_yield = function(hint)
+                        local total = #source.underlines
+                        if hint and hint.progress and total > 0 then
+                            match_current = math.max(match_current,
+                                math.floor(hint.progress * total))
+                        end
+                        self:yield("match", nil, { current = match_current, count = total })
+                    end,
                     yield = function(current, count)
-                        if current then match_current = current end
+                        if current then match_current = math.max(match_current, current) end
                         self:yield("match", nil, {
                             current = match_current, count = count or #source.underlines,
+                        })
+                    end,
+                    fallback_yield = function()
+                        self:yield("match", nil, {
+                            current = match_current, count = #source.underlines,
                         })
                     end,
                     checkpoint = function(state)
@@ -372,13 +392,17 @@ function Sync:run()
                     started = self.perf("chapter_match", started, "chapter_uid=", uid,
                         "located=", stats.located, "unmatched=", stats.unmatched)
                 end
+                if stats.aborted and self.perf then
+                    self.perf("chapter_match_aborted", started, "chapter_uid=", uid,
+                        "located=", stats.located, "unmatched=", stats.unmatched)
+                end
                 if projection and #(projection.records or {}) > 0
-                    and stats.total > 0 and stats.located == 0 then
+                    and stats.total > 0 and stats.located == 0 and not stats.aborted then
                     error("No underlines could be matched. Previous chapter results were preserved.")
                 end
                 projection = { revision = source.revision, range_key = range_key,
                     matcher_version = External.MATCHER_VERSION, records = records,
-                    stats = stats, complete = true }
+                    stats = stats, complete = not stats.aborted }
             end
         end
         -- Reprojection only changes coordinates. Keep the committed source
@@ -405,7 +429,8 @@ function Sync:run()
             changes[#changes + 1] = { kind = "matching", key = key }
             changes[#changes + 1] = { kind = "status", key = key, uid = uid,
                 value = { stats = projection.stats, revision = projection.revision,
-                    matcher_version = projection.matcher_version, range_key = range_key } }
+                    matcher_version = projection.matcher_version, range_key = range_key,
+                    aborted = projection.stats.aborted or nil } }
         end
         store:write(book_id, changes)
         if self.perf then self.perf("chapter_save", started, "chapter_uid=", uid) end

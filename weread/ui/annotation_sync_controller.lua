@@ -34,6 +34,20 @@ local function annotation_progress(state)
     return completed
 end
 
+-- Local match/persist stages do no network work, so they can resume quickly:
+-- the old 0.1s floor turned a long chapter's thousands of walk yields into
+-- minutes of scheduling delay.  Network stages keep the 0.1s floor so a
+-- request yield does not spin the event loop.
+local LOCAL_STAGES = { match = true, persist = true }
+
+local function resume_delay(state)
+    local delay = state.delay or 0.01
+    if LOCAL_STAGES[state.stage] then
+        return math.max(0.01, delay)
+    end
+    return math.max(0.1, delay)
+end
+
 function M:_annotationStore()
     if not self.annotation_store then
         self.annotation_store = require("weread.lib.annotation_store"):new(self.settings)
@@ -579,7 +593,7 @@ function M:_runAnnotationJob(context, options)
             request.progress:reportProgress(annotation_progress(state))
             request.progress:setTitle(title)
         end
-        UIManager:scheduleIn(math.max(0.1, state.delay or 0.1), safe_step)
+        UIManager:scheduleIn(resume_delay(state), safe_step)
     end
     safe_step = function()
         local function run()

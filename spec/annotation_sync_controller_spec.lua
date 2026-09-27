@@ -1,9 +1,13 @@
 package.path = "./?.lua;" .. package.path
 local helper = require("spec.helpers.annotation_test_store")
-local scheduled, shown, notices, progress_titles, progress_updates, prevented, allowed = {}, {}, {}, {}, {}, 0, 0
+local scheduled, scheduled_delays, shown, notices, progress_titles, progress_updates, prevented, allowed = {}, {}, {}, {}, {}, {}, 0, 0
 package.preload["ui/uimanager"] = function()
     return {
-        scheduleIn = function(_self, _delay, callback) scheduled[#scheduled + 1] = callback end,
+        scheduleIn = function(_self, delay, callback)
+            scheduled[#scheduled + 1] = callback
+            scheduled_delays[#scheduled_delays + 1] = { delay = delay,
+                title = progress_titles[#progress_titles] }
+        end,
         close = function() end, setDirty = function() end, show = function(_self, widget) shown[#shown + 1] = widget end,
     }
 end
@@ -106,6 +110,22 @@ assert(host:ensureAnnotationDisplay() and #shown == 1 and calls == 0,
 shown[1].ok_callback()
 drain()
 assert(calls == 1 and #host._xpointer_overlay.records == 1)
+local saw_match_delay, saw_network_floor = false, false
+for _, entry in ipairs(scheduled_delays) do
+    local title = entry.title
+    if type(title) == "string" and title:find("Matching underlines", 1, true) then
+        if entry.delay <= 0.02 then saw_match_delay = true end
+    end
+    if type(title) == "string" and (title:find("Downloading thoughts", 1, true)
+        or title:find("Downloading underlines", 1, true)
+        or title:find("Downloading underline source text", 1, true)) then
+        assert(entry.delay >= 0.1,
+            "a network stage resumed below the 0.1s floor: " .. tostring(entry.delay))
+        saw_network_floor = true
+    end
+end
+assert(saw_match_delay, "the match stage did not resume with a small delay")
+assert(saw_network_floor, "no network stage was scheduled to verify the 0.1s floor")
 assert(store:get("book", "meta", "enabled") == true)
 assert(not host:isAnnotationPrefetchEnabled(),
     "annotation prefetch must default to off")

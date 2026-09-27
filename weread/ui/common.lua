@@ -17,7 +17,8 @@ local unpack_args = PluginUtil.unpack_args
 local M = {}
 
 local SESSION_RECOVERY_COOLDOWN_SECONDS = 60
-local SESSION_KEEPALIVE_INTERVAL_SECONDS = 60 * 60
+local SESSION_KEEPALIVE_INTERVAL_SECONDS = 30 * 60
+local SESSION_KEEPALIVE_TICK_SECONDS = 15 * 60
 M.last_session_recovery_at = 0
 
 function M:safeCallback(label, callback)
@@ -233,6 +234,18 @@ function M:maybeKeepAliveSession()
         end
     end, nil, { silent_offline = true })
     return true
+end
+
+function M:startSessionKeepAliveTimer()
+    if type(UIManager.scheduleIn) ~= "function" then
+        return
+    end
+    UIManager:scheduleIn(SESSION_KEEPALIVE_TICK_SECONDS, function()
+        if self.maybeKeepAliveSession then
+            self:maybeKeepAliveSession()
+        end
+        self:startSessionKeepAliveTimer()
+    end)
 end
 
 function M:requireLogin(require_cookie, require_api_key)

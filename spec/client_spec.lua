@@ -682,6 +682,8 @@ responses = {}
 local fallback_settings = new_renew_settings({
     session_generation = 1,
     cookies = { wr_skey = "old-key-12345678", wr_vid = "999" },
+    access_token = "access-token-123456",
+    refresh_token = "refresh-token-123456",
 })
 local fallback_client = Client:new(fallback_settings)
 fallback_client.json_encode = function() return "{}" end

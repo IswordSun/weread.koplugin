@@ -218,6 +218,9 @@ function WeReadPlugin:init()
     if self.maybeKeepAliveSession then
         self:maybeKeepAliveSession()
     end
+    if self.startSessionKeepAliveTimer then
+        self:startSessionKeepAliveTimer()
+    end
     logger.info("initialized:", "version=", self.version)
     updater:cleanup_backup()
 end

@@ -1,12 +1,27 @@
 package.path = "./?.lua;" .. package.path
 local helper = require("spec.helpers.annotation_test_store")
-local scheduled, scheduled_delays, shown, notices, progress_titles, progress_updates, prevented, allowed = {}, {}, {}, {}, {}, {}, 0, 0
+local scheduled, scheduled_delays, watchdogs, shown, notices, progress_titles, progress_updates, prevented, allowed = {}, {}, {}, {}, {}, {}, {}, 0, 0
+local function unschedule(list, callback)
+    for index, entry in ipairs(list) do
+        if entry == callback then table.remove(list, index); return end
+    end
+end
 package.preload["ui/uimanager"] = function()
     return {
         scheduleIn = function(_self, delay, callback)
-            scheduled[#scheduled + 1] = callback
+            -- The real UIManager honors delays; drain() below only settles quick
+            -- work, so the 90s network watchdog is kept apart and fired explicitly.
+            if type(delay) == "number" and delay >= 60 then
+                watchdogs[#watchdogs + 1] = callback
+            else
+                scheduled[#scheduled + 1] = callback
+            end
             scheduled_delays[#scheduled_delays + 1] = { delay = delay,
                 title = progress_titles[#progress_titles] }
+        end,
+        unschedule = function(_self, callback)
+            unschedule(scheduled, callback)
+            unschedule(watchdogs, callback)
         end,
         close = function() end, setDirty = function() end, show = function(_self, widget) shown[#shown + 1] = widget end,
     }
@@ -729,5 +744,81 @@ do
     assert(prevented == allowed, "standby guard leaked after the paused legacy rebuild")
 end
 
+-- A child that never returns must not hang the sync: the parent watchdog
+-- dismisses the trapper wait, the request stays inside its retry budget, and
+-- the job then pauses cleanly instead of waiting forever.
+do
+    local watch_log = {}
+    local logger = require("weread.lib.logger")
+    local logger_warn = logger.warn
+    logger.warn = function(...)
+        local parts = {}
+        for i = 1, select("#", ...) do parts[i] = tostring(select(i, ...)) end
+        watch_log[#watch_log + 1] = table.concat(parts, " ")
+    end
+    local spawned, dismissed = 0, 0
+    package.loaded["ffi/util"] = { runInSubProcess = function() end }
+    package.loaded["ui/trapper"] = {
+        wrap = function(_self, callback)
+            local ok, err = coroutine.resume(coroutine.create(callback))
+            assert(ok, err)
+        end,
+        dismissableRunInSubprocess = function(_self, _task, dialog)
+            spawned = spawned + 1
+            local co = coroutine.running()
+            dialog.dismiss_callback = function()
+                dismissed = dismissed + 1
+                local ok, err = coroutine.resume(co, false)
+                assert(ok, err)
+            end
+            return coroutine.yield()
+        end,
+    }
+    local wd_context = { path = "single", book_id = "watchdog", document_key = "watchdog-key",
+        store = store, binding = { book_id = "watchdog", title = "Watchdog" }, statuses = {},
+        chapters = { { chapterUid = "1" } }, ranges = {} }
+    host._annotation_context = wd_context
+    host.settings = { get = function(_self, key, default)
+        return key == "cache" and cache or default end, set = function() end, flush = function() end }
+    host.client = {
+        get_chapter_underlines = function() return true, { underlines = { { range = "0-1", markText = "a" } } } end,
+        build_chapter_review_batches = function(_self, ranges) return { { ranges[1] } } end,
+        get_chapter_reviews_batch = function() return true, { reviews = {} } end,
+    }
+    host.isNetworkConnected = function() return true end
+    host._reader_session_gen = 4
+    for k, v in pairs(Controller) do host[k] = v end
+    local before_watchdogs = #watchdogs
+    local before_notices = #notices
+    host:_runAnnotationJob(wd_context, {})
+    drain()
+    assert(spawned == 1 and #watchdogs == before_watchdogs + 1,
+        "the suspended network wait did not arm a watchdog")
+    for attempt = 1, 3 do
+        assert(#watchdogs == before_watchdogs + 1,
+            "attempt " .. attempt .. " did not have exactly one watchdog armed")
+        table.remove(watchdogs, before_watchdogs + 1)()
+        drain()
+    end
+    assert(dismissed == 3 and spawned == 3,
+        "the watchdog abort did not stay within the retry budget: dismissed="
+            .. dismissed .. " spawned=" .. spawned)
+    assert(#watchdogs == before_watchdogs, "the watchdog timer leaked after the job paused")
+    assert(not host._external_annotation_sync, "the watchdog paused the job uncleanly")
+    assert(prevented == allowed, "the watchdog abort leaked a standby guard")
+    assert(#notices == before_notices + 1, "the watchdog pause did not report to the user")
+    local saw_watchdog = false
+    for _, line in ipairs(watch_log) do
+        if line:find("annotation_sync_watchdog", 1, true)
+            and line:find("book_id=watchdog", 1, true)
+            and line:find("request=underlines", 1, true) then
+            saw_watchdog = true
+        end
+    end
+    assert(saw_watchdog, "the watchdog abort was not logged with its request kind")
+    logger.warn = logger_warn
+    package.loaded["ffi/util"], package.loaded["ui/trapper"] = nil, nil
+end
+
 helper.cleanup()
-print("annotation_sync_controller_spec: consent, completion, cancellation, sessions, prefetch and legacy rebuild passed")
+print("annotation_sync_controller_spec: consent, completion, cancellation, sessions, prefetch, legacy rebuild and network watchdog passed")

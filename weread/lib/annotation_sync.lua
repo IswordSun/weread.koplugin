@@ -4,6 +4,7 @@ local External = require("weread.lib.external_annotations")
 local Chapters = require("weread.lib.annotation_chapters")
 local Source = require("weread.lib.annotation_source")
 local Annotations = require("weread.lib.annotations")
+local logger = require("weread.lib.logger")
 local Sync = {}
 Sync.__index = Sync
 Sync.NETWORK_REQUIRED = "annotation_network_required"
@@ -12,6 +13,51 @@ Sync.PERSISTENCE_VERSION = 1
 -- whole-book fallback calls and abort its matching after this much CPU.
 Sync.CHAPTER_BUDGET = 60
 Sync.MAX_CHAPTER_FALLBACKS = 4
+-- Bound one annotation-sync HTTP attempt so a stalled download fails and the
+-- existing retry/pause path runs instead of hanging the job. The transport's
+-- idle timeout is left alone; only the whole request is bounded. Non-sync
+-- callers (book/chapter/epub downloads) never pass this option.
+Sync.NETWORK_TOTAL_TIMEOUT = 60
+
+-- One cheap, greppable line per phase so a device log can no longer be silent
+-- across a whole download/persist window:
+--   grep annotation_batch_perf crash.log     -- one line per review-batch attempt
+--   grep annotation_persist_perf crash.log   -- one line per local persist write
+--   grep annotation_source_perf crash.log    -- one line per source-text fetch
+--   grep annotation_request_failed crash.log -- one line per exhausted request
+local BATCH_PERF = "annotation_batch_perf"
+local PERSIST_PERF = "annotation_persist_perf"
+local SOURCE_PERF = "annotation_source_perf"
+local REQUEST_FAILED = "annotation_request_failed"
+
+-- ui/time.now() is an fts (microseconds), so convert it to the milliseconds
+-- this pipeline's elapsed helpers expect.
+local ok_time, time = pcall(require, "ui/time")
+local function now_ms()
+    if ok_time and type(time) == "table" and type(time.now) == "function" then
+        if type(time.to_ms) == "function" then
+            return time.to_ms(time.now())
+        end
+        return time.now() / 1000
+    end
+    return os.time() * 1000
+end
+
+local function elapsed_ms(started, finished)
+    return math.max(0, (finished or started) - started)
+end
+
+local function log_fields(tag, fields)
+    local parts = { tag }
+    for _, field in ipairs(fields) do
+        parts[#parts + 1] = tostring(field[1]) .. "=" .. tostring(field[2])
+    end
+    logger.info(table.concat(parts, " "))
+end
+
+local function format_ms(value)
+    return string.format("%.1f", value)
+end
 
 -- Gateway batches normally contain 30 ranges. Keep the local write path
 -- bounded too, in case a future endpoint response is larger than expected.
@@ -66,6 +112,10 @@ function Sync:new(options)
     return job
 end
 
+function Sync:now_ms()
+    return (self.clock or now_ms)()
+end
+
 function Sync:yield(stage, delay, detail)
     local state = { stage = stage, delay = delay or 0.01,
         index = self.index, total = #self.chapters, completed = self.completed }
@@ -86,21 +136,32 @@ end
 -- The UI adapter runs yielded network work outside this pipeline coroutine.
 -- Only returned data is resumed here, so checkpoints and document access stay
 -- in the parent. Headless prefetch keeps its existing synchronous worker path.
-function Sync:callNetwork(fn)
-    if self.async_network then return coroutine.yield({ network = fn }) end
+function Sync:callNetwork(fn, label)
+    if self.async_network then return coroutine.yield({ network = fn, network_label = label or "request" }) end
     return fn()
 end
 
-function Sync:request(fn, progress)
+function Sync:request(fn, progress, log_attempt)
     self:requireNetwork()
     for attempt = 1, 3 do
         self:yield(progress and progress.stage or "download",
             attempt == 1 and 0.3 or 2 ^ attempt, progress)
         self:requireNetwork()
-        local ok, data, err = self:callNetwork(fn)
+        local started = self:now_ms()
+        local ok, data, err = self:callNetwork(fn, progress and progress.stage or "download")
+        local waited = elapsed_ms(started, self:now_ms())
+        if log_attempt then log_attempt(ok, data, waited, attempt) end
         if ok and type(data) == "table" then return data end
         self:requireNetwork()
-        if attempt == 3 then error(err or "Invalid annotation response") end
+        if attempt == 3 then
+            log_fields(REQUEST_FAILED, {
+                { "book_id", self.book_id },
+                { "stage", progress and progress.stage or "download" },
+                { "waited_ms", format_ms(waited) },
+                { "error", tostring(err or "invalid response") },
+            })
+            error(err or "Invalid annotation response")
+        end
     end
 end
 
@@ -185,7 +246,8 @@ function Sync:run()
             if not stage then
                 local result = self:request(function()
                     local ok, data, err = self.client:get_chapter_underlines(book_id,
-                        chapter.chapterUid or chapter.chapterId or chapter.chapter_uid)
+                        chapter.chapterUid or chapter.chapterId or chapter.chapter_uid,
+                        { total_timeout = Sync.NETWORK_TOTAL_TIMEOUT })
                     if ok and (type(data) ~= "table" or type(data.underlines) ~= "table") then
                         return false, nil, "Invalid underline response"
                     end
@@ -227,14 +289,25 @@ function Sync:run()
                 downloaded = downloaded + #(batches[batch_index] or {})
             end
             for batch_index = stage.next_batch or 1, #batches do
+                local batch_rows = batches[batch_index]
                 local result = self:request(function()
                     local ok, data, err = self.client:get_chapter_reviews_batch(book_id,
-                        chapter.chapterUid or chapter.chapterId or chapter.chapter_uid, batches[batch_index])
+                        chapter.chapterUid or chapter.chapterId or chapter.chapter_uid, batch_rows,
+                        { total_timeout = Sync.NETWORK_TOTAL_TIMEOUT })
                     if ok and (type(data) ~= "table" or type(data.reviews) ~= "table") then
                         return false, nil, "Invalid thoughts response"
                     end
                     return ok, data, err
-                end, { stage = "thoughts", current = downloaded, count = #ranges })
+                end, { stage = "thoughts", current = downloaded, count = #ranges },
+                function(ok, data, waited)
+                    local reviews = ok and type(data) == "table" and #(data.reviews or {}) or 0
+                    log_fields(BATCH_PERF, {
+                        { "book_id", book_id }, { "chapter_uid", uid },
+                        { "batch", batch_index .. "/" .. #batches },
+                        { "ranges", #batch_rows }, { "reviews", reviews },
+                        { "ms", format_ms(waited) }, { "error", ok ~= true },
+                    })
+                end)
                 stage.next_batch = batch_index + 1
                 store:write(book_id, {
                     { kind = "batch", key = uid .. ":" .. batch_index, uid = uid, value = result.reviews },
@@ -256,6 +329,8 @@ function Sync:run()
             local persist_review = stage.next_persist_review or 1
             local persist_rows
             while persist_batch <= #batches do
+                local persist_started = self:now_ms()
+                local write_batch = persist_batch
                 if not persist_rows then
                     persist_rows = store:get(book_id, "batch", uid .. ":" .. persist_batch)
                     assert(persist_rows, "Missing saved thoughts batch")
@@ -295,6 +370,13 @@ function Sync:run()
                 stage.next_persist_review = persist_review
                 changes[#changes + 1] = { kind = "download", key = uid, uid = uid, value = stage }
                 store:write(book_id, changes)
+                log_fields(PERSIST_PERF, {
+                    { "book_id", book_id }, { "chapter_uid", uid },
+                    { "batch", write_batch .. "/" .. #batches },
+                    { "ranges", range_count }, { "thoughts", thought_count },
+                    { "bytes", byte_count },
+                    { "ms", format_ms(elapsed_ms(persist_started, self:now_ms())) },
+                })
                 local persisted = 0
                 for batch_index = 1, persist_batch - 1 do
                     persisted = persisted + #(batches[batch_index] or {})
@@ -315,7 +397,13 @@ function Sync:run()
                     self:requireNetwork()
                     self:yield("source", 0.3)
                     self:requireNetwork()
+                    local source_started = self:now_ms()
                     local fetched = self.fetch_source(chapter)
+                    log_fields(SOURCE_PERF, {
+                        { "book_id", book_id }, { "chapter_uid", uid },
+                        { "bytes", type(fetched) == "string" and #fetched or 0 },
+                        { "ms", format_ms(elapsed_ms(source_started, self:now_ms())) },
+                    })
                     original = type(fetched) == "table" and fetched or Source.index(fetched)
                     store:put(book_id, "original", uid, original, uid)
                 end

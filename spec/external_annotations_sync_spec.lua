@@ -508,5 +508,106 @@ assert(finish(new("budget", budget_chapters, { store = budget_store, client = bu
 assert(#calls == count and #matched == 4,
     "an aborted chapter was served from cache instead of being retried")
 
+-- Every annotation-sync request carries the bounded total timeout; nothing
+-- else does (client_annotation_batch_spec pins the transport-level scoping).
+local seen = {}
+local scoped_client = {
+    get_chapter_underlines = function(_self, _book, _uid, opts)
+        seen.underlines = opts and opts.total_timeout
+        return true, { underlines = { { range = "1-2", markText = "alpha" } } }
+    end,
+    build_chapter_review_batches = function(_self, ranges) return { ranges } end,
+    get_chapter_reviews_batch = function(_self, _book, _uid, _batch, opts)
+        seen.reviews = opts and opts.total_timeout
+        return true, { reviews = {} }
+    end,
+}
+assert(finish(new("scoped", { { chapterUid = "1" } }, { client = scoped_client, book_id = "scoped" })))
+assert(seen.underlines == Sync.NETWORK_TOTAL_TIMEOUT and seen.reviews == Sync.NETWORK_TOTAL_TIMEOUT,
+    "annotation sync requests did not carry the bounded total timeout")
+
+-- A request that never succeeds consumes its retries, then pauses the job with
+-- the request error instead of hanging; the checkpoint stays resumable.
+local timeout_seen, timeout_attempts = nil, 0
+local timeout_client = {
+    get_chapter_underlines = function(_self, _book, _uid, opts)
+        timeout_seen = opts and opts.total_timeout
+        timeout_attempts = timeout_attempts + 1
+        return false, nil, "http timeout"
+    end,
+    build_chapter_review_batches = function() return {} end,
+    get_chapter_reviews_batch = function() return true, { reviews = {} } end,
+}
+local timeout_done, timeout_err = finish(Sync:new({ store = helper.new(), client = timeout_client,
+    book_id = "timeout", chapters = { { chapterUid = "1" } } }))
+assert(timeout_done == nil and timeout_attempts == 3 and timeout_seen == Sync.NETWORK_TOTAL_TIMEOUT,
+    "a timing-out sync request did not retry, pause or keep its bounded timeout")
+assert(timeout_err and timeout_err:find("http timeout", 1, true),
+    "the paused sync did not surface the request error: " .. tostring(timeout_err))
+
+-- Per-phase diagnostics must be emitted with the fields needed to diagnose a
+-- window that used to be silent on device.
+local captured = {}
+local logger = require("weread.lib.logger")
+local logger_info = logger.info
+logger.info = function(...)
+    local parts = {}
+    for i = 1, select("#", ...) do parts[i] = tostring(select(i, ...)) end
+    captured[#captured + 1] = table.concat(parts, " ")
+end
+local function log_line(prefix)
+    for _, line in ipairs(captured) do
+        if line:sub(1, #prefix) == prefix then return line end
+    end
+end
+local clock = function() return 5000 end
+local logged_client = {
+    get_chapter_underlines = function()
+        return true, { underlines = { { range = "1-2", markText = "alpha" } } }
+    end,
+    build_chapter_review_batches = function(_self, ranges) return { ranges } end,
+    get_chapter_reviews_batch = function(_self, _book, _uid, batch)
+        return true, { reviews = { { range = batch[1],
+            pageReviews = { { review = { content = "thought", author = {} } } } } } }
+    end,
+}
+assert(finish(new("logged", { { chapterUid = "7" } },
+    { client = logged_client, book_id = "logged", clock = clock })))
+local batch_line = log_line("annotation_batch_perf book_id=logged")
+assert(batch_line and batch_line:find(" chapter_uid=7 ", 1, true)
+        and batch_line:find(" batch=1/1 ", 1, true)
+        and batch_line:find(" ranges=1 ", 1, true)
+        and batch_line:find(" reviews=1 ", 1, true)
+        and batch_line:find(" ms=", 1, true)
+        and batch_line:find(" error=false", 1, true),
+    "batch perf log missing expected fields: " .. tostring(batch_line))
+local persist_line = log_line("annotation_persist_perf book_id=logged")
+assert(persist_line and persist_line:find(" chapter_uid=7 ", 1, true)
+        and persist_line:find(" batch=1/1 ", 1, true)
+        and persist_line:find(" ranges=1 ", 1, true)
+        and persist_line:find(" thoughts=1 ", 1, true)
+        and persist_line:find(" bytes=", 1, true)
+        and persist_line:find(" ms=", 1, true),
+    "persist perf log missing expected fields: " .. tostring(persist_line))
+
+-- Source-text fetches are logged with byte length and elapsed time.
+local fetched_html = "<p>alpha beta</p>"
+local source_client = {
+    get_chapter_underlines = function()
+        return true, { underlines = { { range = "1-2" } } }
+    end,
+    build_chapter_review_batches = function(_self, ranges) return { ranges } end,
+    get_chapter_reviews_batch = function() return true, { reviews = {} } end,
+}
+assert(finish(Sync:new({ store = helper.new(), client = source_client, book_id = "sourced",
+    chapters = { { chapterUid = "3" } }, fetch_source = function() return fetched_html end,
+    clock = clock })))
+local source_line = log_line("annotation_source_perf book_id=sourced")
+assert(source_line and source_line:find(" chapter_uid=3 ", 1, true)
+        and source_line:find(" bytes=" .. #fetched_html, 1, true)
+        and source_line:find(" ms=", 1, true),
+    "source perf log missing expected fields: " .. tostring(source_line))
+logger.info = logger_info
+
 helper.cleanup()
-print("external_annotations_sync_spec: resume, cross-file reuse, empty updates and offline prefetch passed")
+print("external_annotations_sync_spec: resume, cross-file reuse, empty updates, offline prefetch and bounded sync requests passed")

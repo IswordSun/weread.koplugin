@@ -40,6 +40,13 @@ end
 -- request yield does not spin the event loop.
 local LOCAL_STAGES = { match = true, persist = true }
 
+-- Parent-side watchdog for the child wait. The 60s HTTP total timeout already
+-- bounds each attempt inside the child; this catches a child that wedges in a
+-- way the socket timeout cannot (for example a blocked pipe on a huge payload).
+-- It aborts the wait and feeds a normal failure back to Sync:request, so the
+-- existing retry/pause path runs instead of waiting forever.
+local NETWORK_WATCHDOG_SECONDS = 90
+
 local function resume_delay(state)
     local delay = state.delay or 0.01
     if LOCAL_STAGES[state.stage] then
@@ -378,11 +385,34 @@ end
 -- Same pipe/termination path as chapter downloads. Never run the whole
 -- annotation job in a child: matching uses the open document, and completed
 -- thought batches must be committed by the parent before starting the next one.
-function M:_runAnnotationNetwork(request, task)
+function M:_runAnnotationNetwork(request, task, label)
     local ok_json, Json = pcall(require, "json")
     if not ok_json then Json = require("rapidjson") end
     local WorkerSettings = require("weread.lib.worker_settings")
     local fingerprint = WorkerSettings.fingerprint(self.settings)
+    local finished, watchdog = false, nil
+    local function cancel_watchdog()
+        if watchdog then
+            UIManager:unschedule(watchdog)
+            watchdog = nil
+        end
+    end
+    local function fire_watchdog()
+        watchdog = nil
+        if finished or request.cancelled or self._external_annotation_sync ~= request then return end
+        request.network_watchdog = true
+        logger.warn("annotation_sync_watchdog book_id=" .. tostring(request.context.book_id)
+            .. " request=" .. tostring(label or "request")
+            .. " waited_s=" .. tostring(NETWORK_WATCHDOG_SECONDS))
+        -- dismissableRunInSubprocess installs the dialog's dismiss_callback;
+        -- invoking it is the same resume path as tapping Pause. There is no
+        -- other supported programmatic abort, so this closest safe mechanism
+        -- terminates the child and makes the wait return completed=false.
+        local dismiss = request.progress and request.progress.dismiss_callback
+        if dismiss then dismiss() end
+    end
+    watchdog = fire_watchdog
+    UIManager:scheduleIn(NETWORK_WATCHDOG_SECONDS, fire_watchdog)
     local completed, encoded = request.trapper:dismissableRunInSubprocess(function()
         local auth_result = WorkerSettings.capture(self.settings)
         local ok, values = xpcall(function()
@@ -394,8 +424,15 @@ function M:_runAnnotationNetwork(request, task)
         -- serializer rejects. Send JSON over its existing plain-string pipe.
         return Json.encode({ ok = ok, values = values, auth = auth_result() })
     end, request.progress, true)
+    finished = true
+    cancel_watchdog()
     request.progress.dismiss_callback = nil
     if self._external_annotation_sync ~= request or request.cancelled then return end
+    local watchdog_fired = request.network_watchdog == true
+    request.network_watchdog = nil
+    if watchdog_fired and not completed then
+        return { false, nil, "annotation network watchdog timeout" }
+    end
     if not completed then error("could not start annotation worker") end
     if not encoded or encoded == "" then error("annotation worker returned no result") end
     local result = Json.decode(encoded)
@@ -483,12 +520,13 @@ function M:_runAnnotationJob(context, options)
         end,
         fetch_source = function(chapter)
             local html, format = request.job:callNetwork(function()
-                local body = Content.fetch_chapter_xhtml(self.client, self.settings, source_book, chapter)
+                local body = Content.fetch_chapter_xhtml(self.client, self.settings, source_book, chapter,
+                    { total_timeout = Sync.NETWORK_TOTAL_TIMEOUT })
                 if source_book._content_format == "txt" then
                     body = context.store:get(context.book_id, "original", Chapters.uid(chapter)) or {}
                 end
                 return body, source_book._content_format
-            end)
+            end, "source")
             source_book._content_format = format
             return html
         end,
@@ -526,7 +564,7 @@ function M:_runAnnotationJob(context, options)
         while done == false and state and state.network do
             -- Trapper yields from this outer coroutine, never from Sync.thread.
             -- Resuming the pipeline before the child returns would lose data.
-            local values = self:_runAnnotationNetwork(request, state.network)
+            local values = self:_runAnnotationNetwork(request, state.network, state.network_label)
             if self._external_annotation_sync ~= request then return end
             if file(self) ~= context.path or self._reader_session_gen ~= request.session then
                 self:_cancelUnifiedAnnotationSync()

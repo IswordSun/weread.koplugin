@@ -164,6 +164,9 @@ function M:onReaderReady()
     if rr.enabled and rr.mode == "auto" and reason == "document_not_weread" then
         self:showTransientInfo(_("Current book is not from WeRead, reading time not reported"), 1)
     end
+    if self.maybeKeepAliveSession then
+        self:maybeKeepAliveSession()
+    end
     perf("reader_services", annotations_ready)
     perf("reader_ready_total", opened)
 end

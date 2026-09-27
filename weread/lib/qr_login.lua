@@ -481,6 +481,8 @@ function QRLogin:_run_weblogin_chain(getinfo, identity)
         webLoginVid = final_vid,
         accessToken = final_skey,
         refreshToken = final_refresh,
+        webloginAccessToken = access_token,
+        webloginRefreshToken = refresh_token,
     }
 end
 
@@ -502,6 +504,8 @@ function QRLogin:_complete_protocol(login_result, generation)
     local web_login_vid = tostring(login_result.webLoginVid or "")
     local access_token = tostring(login_result.accessToken or "")
     local refresh_token = tostring(login_result.refreshToken or "")
+    local weblogin_access_token = tostring(login_result.webloginAccessToken or "")
+    local weblogin_refresh_token = tostring(login_result.webloginRefreshToken or "")
     if web_login_vid == "" or access_token == "" then
         error("QR login response is missing account credentials")
     end
@@ -564,6 +568,9 @@ function QRLogin:_complete_protocol(login_result, generation)
         api_key = api_key,
         wr_ticket = "",
         wr_wrpa = "",
+        access_token = weblogin_access_token,
+        refresh_token = weblogin_refresh_token,
+        last_session_renewal_at = os.time(),
         account = account,
         session_generation = session_generation + 1,
     }, { replace_cookies = true })

@@ -626,4 +626,75 @@ expect(clear_ok, "successful renewal raised an error")
 expect(SessionState.is_invalid() == false and SessionState.reason() == nil,
     "a successful renewal did not clear the invalid session state")
 
+-- --- Token-based renewal (session/init) ------------------------------------
+
+responses = {}
+local token_settings = new_renew_settings({
+    session_generation = 3,
+    cookies = { wr_vid = "999", wr_skey = "old-key-12345678" },
+    access_token = "access-token-123456",
+    refresh_token = "refresh-token-123456",
+})
+local token_client = Client:new(token_settings)
+token_client.json_encode = function() return "{}" end
+token_client.json_decode = function() return { success = true } end
+responses[#responses + 1] = {
+    body = '{"success":true}',
+    code = 200,
+    headers = { ["set-cookie"] = "wr_skey=XXX-token-renewed-12345; Path=/; HttpOnly" },
+}
+local token_ok, token_result = pcall(function()
+    return token_client:renew_via_session_init()
+end)
+expect(token_ok and type(token_result) == "table" and token_result.success == true,
+    "token renewal did not report success")
+expect(#token_settings.update_calls == 1
+    and token_settings.update_calls[1].options.replace_cookies == true,
+    "token renewal did not persist atomically")
+expect(token_settings.values.cookies.wr_skey == "XXX-token-renewed-12345"
+    and token_settings.values.cookies.wr_vid == "999",
+    "token renewal did not merge the fresh cookies")
+expect(token_settings.values.session_generation == 4,
+    "token renewal did not bump the generation")
+expect(type(token_settings.values.last_session_renewal_at) == "number"
+    and token_settings.values.last_session_renewal_at > 0,
+    "token renewal did not record its timestamp")
+expect(SessionState.is_invalid() == false,
+    "token renewal did not clear the session state")
+
+local refused_settings = new_renew_settings({
+    session_generation = 0,
+    cookies = { wr_vid = "999" },
+    access_token = "access-token-123456",
+})
+local refused_client = Client:new(refused_settings)
+refused_client.json_encode = function() return "{}" end
+refused_client.json_decode = function() return { errCode = -2013, errMsg = "鉴权失败" } end
+responses[#responses + 1] = { body = '{"errCode":-2013}', code = 200 }
+local refused_ok = pcall(function()
+    return refused_client:renew_via_session_init()
+end)
+expect(not refused_ok, "refused token renewal did not raise")
+expect(SessionState.is_invalid() == true,
+    "refused token renewal did not mark the session invalid")
+
+responses = {}
+local fallback_settings = new_renew_settings({
+    session_generation = 1,
+    cookies = { wr_skey = "old-key-12345678", wr_vid = "999" },
+})
+local fallback_client = Client:new(fallback_settings)
+fallback_client.json_encode = function() return "{}" end
+fallback_client.json_decode = function() return { succ = 1 } end
+responses[#responses + 1] = {
+    body = '{"succ":1}',
+    code = 200,
+    headers = { ["set-cookie"] = "wr_skey=XXX-fallback-renewed-123; Path=/" },
+}
+local fallback_ok, fallback_path = fallback_client:renew_with_fallback()
+expect(fallback_ok == true and fallback_path == "renewal",
+    "fallback renewal did not report the web renewal path")
+expect(SessionState.is_invalid() == false,
+    "fallback renewal did not clear the session state")
+
 print(("client_spec: %d checks"):format(checks))

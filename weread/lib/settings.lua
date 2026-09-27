@@ -14,9 +14,16 @@ local defaults = {
     cookies = {},
     wr_ticket = "",
     wr_wrpa = "",
+    -- Official token pair captured at weblogin login; the token-based
+    -- session/init renewal consumes it (cleared on logout).
+    access_token = "",
+    refresh_token = "",
     -- Session generation guards cookie renewal against stale responses from a
     -- previous session. Bounded scalar, so it belongs in settings.
     session_generation = 0,
+    -- Unix time of the last successful renewal; the keep-alive uses it to
+    -- decide whether a proactive refresh is due.
+    last_session_renewal_at = 0,
     -- Per-device identity seed for the weblogin fingerprint. Persists across
     -- accounts; clear_auth_store intentionally leaves it untouched so a device
     -- keeps its identity when the account changes.
@@ -125,6 +132,9 @@ local function clear_auth_store(store)
     store:saveSetting("cookies", {})
     store:saveSetting("wr_ticket", "")
     store:saveSetting("wr_wrpa", "")
+    store:saveSetting("access_token", "")
+    store:saveSetting("refresh_token", "")
+    store:saveSetting("last_session_renewal_at", 0)
     store:saveSetting("session_generation", defaults.session_generation)
     store:saveSetting("account", deepcopy(defaults.account))
 end

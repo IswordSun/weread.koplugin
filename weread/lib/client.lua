@@ -703,9 +703,91 @@ function Client:renew_cookie()
         updates.wr_wrpa = wr_wrpa
     end
     updates.session_generation = generation + 1
+    updates.last_session_renewal_at = os.time()
     settings:update_auth(updates, { replace_cookies = true })
     SessionState.clear()
     return result, code, resp_headers
+end
+
+function Client:renew_via_session_init()
+    local settings = self.settings
+    local access_token = settings:get("access_token", "")
+    local refresh_token = settings:get("refresh_token", "")
+    if access_token == "" then
+        error("WeRead session tokens are not stored")
+    end
+    local cookies = settings:get("cookies", {}) or {}
+    local account = settings:get("account", {}) or {}
+    local vid = scalar_header_value(cookies, "wr_vid") or ""
+    if vid == "" then
+        vid = scalar_header_value(account, "user_vid") or ""
+    end
+    if vid == "" then
+        error("WeRead session has no account id")
+    end
+    local generation = tonumber(settings:get("session_generation", 0)) or 0
+
+    local result, code, resp_headers = self:post_json(
+        "https://weread.qq.com/web/login/session/init", {
+        vid = vid,
+        skey = access_token,
+        pf = 2,
+        ql = 0,
+        rt = refresh_token,
+    }, {
+        persist_response_cookies = false,
+    })
+
+    local current_generation = tonumber(settings:get("session_generation", 0)) or 0
+    if current_generation ~= generation then
+        logger.err(
+            "ignoring stale session/init renewal response:",
+            "request_generation=", tostring(generation),
+            "current_generation=", tostring(current_generation)
+        )
+        return nil, "stale"
+    end
+
+    local succeeded = type(result) == "table"
+        and (result.success == true or tostring(result.success) == "1"
+            or tostring(result.success) == "true")
+    if not succeeded then
+        local error_code = type(result) == "table"
+            and (result.errCode or result.errcode) or nil
+        local kind = error_code ~= nil
+            and self:auth_error_kind(error_code) or nil
+        SessionState.mark_invalid(kind or "session_replaced")
+        error("WeRead session/init renewal was rejected")
+    end
+
+    local updates = {}
+    local set_cookie = header_value(resp_headers, "set-cookie")
+    if set_cookie then
+        updates.cookies = Cookie.merge_set_cookie(
+            settings:get("cookies", {}), set_cookie)
+    end
+    updates.session_generation = generation + 1
+    updates.last_session_renewal_at = os.time()
+    settings:update_auth(updates, { replace_cookies = true })
+    SessionState.clear()
+    logger.info("session renewed through token exchange")
+    return result, code, resp_headers
+end
+
+function Client:renew_with_fallback()
+    local token_ok = pcall(function()
+        return self:renew_via_session_init()
+    end)
+    if token_ok then
+        return true, "session/init"
+    end
+    local web_ok = pcall(function()
+        return self:renew_cookie()
+    end)
+    if web_ok then
+        return true, "renewal"
+    end
+    return false
 end
 
 function Client:gateway(api_name, params)

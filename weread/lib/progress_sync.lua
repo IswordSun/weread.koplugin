@@ -1,5 +1,4 @@
 local PositionMapper = require("weread.lib.position_mapper")
-local WeRead = require("weread.lib.protocol")
 
 local logger = require("weread.lib.logger").scoped("ProgressSync")
 
@@ -300,10 +299,10 @@ function ProgressSync:_fetch_remote(book_id, chapters, opts)
             and auth_kind ~= "wechat_auth_expired"
             and not opts.auth_retried
         if recoverable then
-            local renewed_ok, renewed = pcall(function()
-                return self.client:renew_cookie()
+            local call_ok, renewed = pcall(function()
+                return self.client:renew_with_fallback()
             end)
-            if renewed_ok and WeRead.is_success_response(renewed) then
+            if call_ok and renewed then
                 log("info", "remote progress refetched after cookie renewal:",
                     "kind=", tostring(auth_kind))
                 return self:_fetch_remote(book_id, chapters, { auth_retried = true })

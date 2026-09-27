@@ -467,5 +467,46 @@ local poison_items = poison_store:get("poison", "thought", "1:1-1")
 assert(poison_items and #poison_items == 1 and poison_items[1].content == "ok"
         and poison_items[1].author == "匿名",
     "malformed pageReview entries were not degraded to a safe popup item")
+
+-- A chapter whose matching exceeds its per-chapter budget is recorded as
+-- partially matched (remaining underlines unmatched), and the job still
+-- completes instead of blocking on it; the aborted chapter is not cached.
+matched = {}
+local budget_book = "budget-book"
+local budget_store = helper.new()
+local budget_client = {
+    get_chapter_underlines = function(_self, _book, uid)
+        calls[#calls + 1] = "ub" .. uid
+        return true, { underlines = { { range = "1-2", markText = "alpha" },
+            { range = "3-4", markText = "beta" } } }
+    end,
+    build_chapter_review_batches = function(_self, ranges)
+        local batches = {}
+        for _, range in ipairs(ranges) do batches[#batches + 1] = { range } end
+        return batches
+    end,
+    get_chapter_reviews_batch = function()
+        return true, { reviews = {} }
+    end,
+}
+local budget_chapters = { { chapterUid = "1" }, { chapterUid = "2" } }
+assert(finish(new("budget", budget_chapters, { store = budget_store, client = budget_client,
+    book_id = budget_book, chapter_budget = 0 })),
+    "a budget-aborted chapter stopped the whole job")
+for _, uid in ipairs({ "1", "2" }) do
+    local status = budget_store:get(budget_book, "status", "budget:" .. uid)
+    assert(status and status.aborted == true
+        and status.stats.total == 2 and status.stats.located == 0
+        and status.stats.unmatched == 2,
+        "budget abort was not recorded as partially matched for chapter " .. uid)
+end
+assert(matched[1] == "1" and matched[2] == "2",
+    "a budget-aborted chapter skipped the remaining chapters")
+count = #calls
+assert(finish(new("budget", budget_chapters, { store = budget_store, client = budget_client,
+    book_id = budget_book, chapter_budget = 0 })))
+assert(#calls == count and #matched == 4,
+    "an aborted chapter was served from cache instead of being retried")
+
 helper.cleanup()
 print("external_annotations_sync_spec: resume, cross-file reuse, empty updates and offline prefetch passed")

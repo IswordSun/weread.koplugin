@@ -320,7 +320,9 @@ function Settings:update_auth(credentials, options)
         changed = true
     end
 
-    for _, key in ipairs({ "api_key", "wr_ticket", "wr_wrpa" }) do
+    for _, key in ipairs({
+        "api_key", "wr_ticket", "wr_wrpa", "access_token", "refresh_token",
+    }) do
         local value = credentials[key]
         if type(value) == "string" then
             self:set(key, value)
@@ -330,6 +332,11 @@ function Settings:update_auth(credentials, options)
     local generation = tonumber(credentials.session_generation)
     if generation ~= nil then
         self:set("session_generation", generation)
+        changed = true
+    end
+    local renewal_at = tonumber(credentials.last_session_renewal_at)
+    if renewal_at ~= nil then
+        self:set("last_session_renewal_at", renewal_at)
         changed = true
     end
     if type(credentials.account) == "table" then

@@ -269,7 +269,7 @@ function QRLogin:_begin_protocol()
     logger.warn("weblogin getuid unavailable; falling back to the classic login chain")
     local data, response_headers = self:_classic_getuid()
     self.login_cookies = merge_response_cookies(self.login_cookies, response_headers)
-    if type(data.uid) ~= "string" or data.uid == "" then
+    if type(data) ~= "table" or type(data.uid) ~= "string" or data.uid == "" then
         error("WeRead did not return a valid login UID")
     end
     self.login_mode = "classic"
@@ -373,14 +373,25 @@ function QRLogin:_authenticated_get(url, cookies, web_login_vid, access_token, s
                 },
             }, stage)
         end)
-        if ok then
+        if ok and type(data) == "table" then
             return data, merge_response_cookies(cookies, response_headers)
         end
-        local retryable = tostring(data):find("HTTP 401", 1, true) ~= nil
-        if not retryable or attempt == 3 then
-            error(data)
+        -- _request_json reports "no HTTP response" as a nil result instead of
+        -- raising, so a nil body is a transport failure and must be retried
+        -- rather than handed back as success.
+        local description, retryable
+        if ok then
+            description = stage .. " returned no usable response"
+            retryable = true
+        else
+            description = data
+            retryable = tostring(data):find("HTTP 401", 1, true) ~= nil
         end
-        logger.warn(stage, "temporarily unauthorized; retrying:", tostring(attempt))
+        if not retryable or attempt == 3 then
+            error(description)
+        end
+        logger.warn(stage, "retrying after a failed attempt:", tostring(attempt),
+            ok and "transport" or "unauthorized")
         sleep_seconds(0.5)
     end
 end
@@ -541,7 +552,8 @@ function QRLogin:_complete_protocol(login_result, generation)
             access_token,
             "apikeyGet"
         )
-        api_key = type(api_result.apikey) == "string" and api_result.apikey or ""
+        api_key = type(api_result) == "table" and type(api_result.apikey) == "string"
+            and api_result.apikey or ""
         if api_key ~= "" then
             break
         end
@@ -557,7 +569,8 @@ function QRLogin:_complete_protocol(login_result, generation)
     end
 
     local account = {
-        name = type(user_info.name) == "string" and user_info.name or "",
+        name = type(user_info) == "table" and type(user_info.name) == "string"
+            and user_info.name or "",
         user_vid = web_login_vid,
         login_method = "qr",
         login_time = os.time(),

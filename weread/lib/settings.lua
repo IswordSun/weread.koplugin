@@ -139,6 +139,24 @@ local function clear_auth_store(store)
     store:saveSetting("account", deepcopy(defaults.account))
 end
 
+-- KOReader builds one plugin instance per document (and per switchDocument), and
+-- LuaSettings:flush() writes the whole in-memory table. With one store per
+-- instance, any instance -- including one whose document was closed long ago --
+-- would flush its own stale snapshot and silently roll back newer writes:
+-- settings toggles, the books index, cookies, the session ticket and the token
+-- pair. Every instance in a process therefore shares a single store per settings
+-- file; only the paths derived from the environment stay per instance.
+local shared_stores = {}
+
+local function open_shared_store(settings_file)
+    local store = shared_stores[settings_file]
+    if not store then
+        store = LuaSettings:open(settings_file)
+        shared_stores[settings_file] = store
+    end
+    return store
+end
+
 function Settings:new()
     local Environment = require("weread.lib.mock_environment")
     local environment = Environment.active()
@@ -157,7 +175,7 @@ function Settings:new()
         mock_endpoint = mock_endpoint,
         collection_name = name,
     }
-    obj.store = LuaSettings:open(obj.settings_file)
+    obj.store = open_shared_store(obj.settings_file)
     if mock_endpoint then
         obj.store:saveSetting("auth_schema_version", Settings.AUTH_SCHEMA_VERSION)
         obj.store:saveSetting("api_key", "mock-api-key")
@@ -399,6 +417,12 @@ end
 
 function Settings:is_api_configured()
     return self:get("api_key", "") ~= ""
+end
+
+-- Test hook: drop the process-wide stores so the next Settings:new() re-reads the
+-- settings file, as a fresh process would.
+function Settings._reset_shared_stores()
+    shared_stores = {}
 end
 
 return Settings

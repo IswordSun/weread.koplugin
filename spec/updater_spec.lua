@@ -60,20 +60,19 @@ expect(#proxy_first == 4 and proxy_first[1]:find("gh%-proxy.com")
 expect(#Updater.candidate_urls("https://example.com/update.zip", true) == 0,
     "untrusted update URL should not receive proxy candidates")
 
--- Release metadata and the checksum are the roots of trust: a mirror that could
--- serve either one could forge the package and its digest together.
-local metadata_only = Updater.candidate_urls(Updater.API_URL, true, true)
-expect(#metadata_only == 1 and metadata_only[1] == Updater.API_URL,
-    "release metadata must be fetched from the official host only")
-local checksum_only = Updater.candidate_urls(
-    Updater.RELEASE_PREFIX .. "v0.7.0/weread.koplugin-v0.7.0.zip.sha256", true, true)
-expect(#checksum_only == 1
-    and checksum_only[1] == Updater.RELEASE_PREFIX .. "v0.7.0/weread.koplugin-v0.7.0.zip.sha256",
-    "the checksum must be fetched from the official host only")
+-- Mirrors must stay usable (github.com is not reachable everywhere), but one
+-- mirror must never serve both the package and the digest that vouches for it.
+local metadata_candidates = Updater.candidate_urls(Updater.API_URL, true)
+expect(#metadata_candidates == 4 and metadata_candidates[4] == Updater.API_URL,
+    "release metadata should keep direct plus mirror candidates")
+local checksum_url = Updater.RELEASE_PREFIX .. "v0.7.0/weread.koplugin-v0.7.0.zip.sha256"
+local checksum_candidates = Updater.candidate_urls(checksum_url, true)
+expect(#checksum_candidates == 4, "the checksum should keep mirror candidates")
 local archive_candidates = Updater.candidate_urls(
     Updater.RELEASE_PREFIX .. "v0.7.0/weread.koplugin-v0.7.0.zip", true)
 expect(#archive_candidates == 4 and archive_candidates[1]:find("gh%-proxy.com"),
-    "the checksum-verified archive should keep its mirror fallbacks")
+    "the archive should keep its mirror fallbacks")
+
 
 -- Release fixtures follow the configured repository so the spec stays host-agnostic.
 local release_tag_base = Updater.RELEASE_PREFIX:gsub("/download/$", "/tag/")
@@ -230,5 +229,39 @@ local main = assert(io.open("main.lua", "r")):read("*a")
 local meta_version = meta:match('version%s*=%s*"([^"]+)"')
 local main_version = main:match('version%s*=%s*"([^"]+)"')
 expect(meta_version == main_version, "main.lua and _meta.lua versions must match")
+
+-- The digest fetch skips whichever source served the archive, and reports the
+-- source it used so the install path can enforce that rule. The order comes from
+-- the same helper the implementation uses, so either proxy preference works.
+local digest_order = Updater.candidate_urls(checksum_url,
+    updater._state and updater:_state().prefer_proxy == true)
+local excluded_source = digest_order[1]
+local expected_source = digest_order[2]
+local tried = {}
+local previous_get = updater._http_get
+updater._http_get = function(_self, candidate)
+    tried[#tried + 1] = candidate
+    if candidate == excluded_source then return nil, "the excluded source must not be used" end
+    return true
+end
+local ok_digest, digest_err, digest_source = updater:_http_get_with_mirrors(
+    checksum_url, "/tmp/unused-checksum", nil, nil, nil, excluded_source)
+updater._http_get = previous_get
+expect(ok_digest == true and digest_err == nil, "the digest fetch failed: " .. tostring(digest_err))
+expect(digest_source == expected_source, "the digest source was not reported")
+expect(tried[1] == expected_source, "the archive's own source was reused for the digest")
+
+-- With no independent source left, the update must abort instead of trusting the
+-- same operator for both the package and its digest.
+local saved_mirrors = Updater.GITHUB_MIRRORS
+Updater.GITHUB_MIRRORS = {}
+local lone = Updater.candidate_urls(checksum_url, false)
+expect(#lone == 1, "test setup: expected a single candidate without mirrors")
+local blocked_ok, blocked_err = updater:_http_get_with_mirrors(
+    lone[1], "/tmp/unused-checksum", nil, nil, nil, lone[1])
+Updater.GITHUB_MIRRORS = saved_mirrors
+expect(blocked_ok == nil
+        and blocked_err == "no independent source is available for the update digest",
+    "a digest from the package's own source must be refused")
 
 print(("updater_spec: %d checks"):format(checks))

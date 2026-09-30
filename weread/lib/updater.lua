@@ -137,17 +137,19 @@ function Updater.compare_versions(left, right)
     return 0
 end
 
--- Release metadata and the checksum are the roots of trust for an update: if a
--- third-party mirror could serve them it could forge the package and its digest
--- together, which would make the SHA-256 check meaningless. `direct_only` keeps
--- those two fetches on the official GitHub host; only the (checksum-verified)
--- archive may fall back to mirrors.
-function Updater.candidate_urls(url, prefer_proxy, direct_only)
+-- Mirrors exist because github.com is not reachable everywhere, so metadata and
+-- payload may both come through them. What must never happen is that one mirror
+-- serves the payload *and* the digest that vouches for it: a single operator
+-- could then forge both and make the SHA-256 check meaningless. The install path
+-- therefore records which source served the archive and refuses to take the
+-- checksum from that same source (the fetcher skips it), so a forged update
+-- needs two independent operators. The extracted _meta.lua version must still
+-- match the advertised release, and only newer versions are offered.
+function Updater.candidate_urls(url, prefer_proxy)
     local is_allowed = url == Updater.API_URL
         or (type(url) == "string"
             and url:sub(1, #Updater.RELEASE_PREFIX) == Updater.RELEASE_PREFIX)
     if not is_allowed then return {} end
-    if direct_only then return { url } end
     local direct, proxies = { url }, {}
     for _, prefix in ipairs(Updater.GITHUB_MIRRORS) do
         proxies[#proxies + 1] = prefix .. url
@@ -281,31 +283,41 @@ function Updater:_http_get(url, destination, on_download, total_hint, max_bytes)
     return destination and true or table.concat(chunks)
 end
 
+-- Returns ok, err and, on success, the candidate URL that served the resource so
+-- a later fetch (the digest) can be required to use a different one.
 function Updater:_http_get_with_mirrors(url, destination, on_download, total_hint, max_bytes,
-                                        direct_only)
-    local candidates = Updater.candidate_urls(url, self:_state().prefer_proxy == true,
-        direct_only)
+                                        exclude_source)
+    local candidates = Updater.candidate_urls(url, self:_state().prefer_proxy == true)
     if #candidates == 0 then return nil, "update URL is not allowed" end
-    local last_error
+    local attempted, last_error = 0, nil
     for index, candidate in ipairs(candidates) do
-        if on_download then on_download(0, total_hint) end
-        local ok, err = self:_http_get(
-            candidate, destination, on_download, total_hint, max_bytes)
-        if ok then
-            logger.info("update resource fetched:", "source=", tostring(index),
-                "proxy=", tostring(candidate ~= url))
-            return ok
+        if exclude_source ~= nil and candidate == exclude_source then
+            logger.warn("update resource source skipped to stay independent:",
+                "source=", tostring(index))
+        else
+            attempted = attempted + 1
+            if on_download then on_download(0, total_hint) end
+            local ok, err = self:_http_get(
+                candidate, destination, on_download, total_hint, max_bytes)
+            if ok then
+                logger.info("update resource fetched:", "source=", tostring(index),
+                    "proxy=", tostring(candidate ~= url))
+                return ok, nil, candidate
+            end
+            if err == "download exceeds size limit" then return nil, err end
+            last_error = err
+            logger.warn("update resource source failed:", "source=", tostring(index),
+                "proxy=", tostring(candidate ~= url), "error=", tostring(err))
         end
-        if err == "download exceeds size limit" then return nil, err end
-        last_error = err
-        logger.warn("update resource source failed:", "source=", tostring(index),
-            "proxy=", tostring(candidate ~= url), "error=", tostring(err))
+    end
+    if attempted == 0 then
+        return nil, "no independent source is available for the update digest"
     end
     return nil, last_error or "all update sources failed"
 end
 
 function Updater:fetch_release()
-    local body, err = self:_http_get_with_mirrors(Updater.API_URL, nil, nil, nil, nil, true)
+    local body, err = self:_http_get_with_mirrors(Updater.API_URL)
     if not body then return nil, err end
     local ok_json, json = pcall(require, "json")
     if not ok_json then return nil, "JSON support unavailable" end
@@ -388,15 +400,16 @@ function Updater:install_release(release, on_progress)
     if not made then return nil, "cannot create staging directory: " .. tostring(make_err) end
 
     local archive_size = tonumber(release.archive_size) or 0
-    local ok, err = self:_http_get_with_mirrors(
+    local ok, err, archive_source = self:_http_get_with_mirrors(
         release.archive_url, archive, function(received, total)
             local ratio = total and total > 0 and math.min(1, received / total) or 0
             report("downloading", math.floor(5 + ratio * 70), received, total or 0)
         end, archive_size, Updater.MAX_PACKAGE_BYTES)
     if not ok then remove_tree(stage); return nil, err end
     report("checksum", 76)
+    -- The digest must not come from whoever served the package.
     local checksum_ok, checksum_err = self:_http_get_with_mirrors(release.checksum_url, checksum,
-        nil, nil, nil, true)
+        nil, nil, nil, archive_source)
     if not checksum_ok then
         remove_file(archive); remove_tree(stage)
         return nil, checksum_err

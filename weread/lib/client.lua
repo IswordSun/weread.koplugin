@@ -153,6 +153,41 @@ local function log_error(err)
     return text
 end
 
+-- Error bodies from the login/renewal endpoints can carry live credentials
+-- (skey, accessToken/refreshToken, the official API key). Logs are the artifact
+-- users paste into bug reports, so values are replaced by a marker and the body
+-- is truncated; the shape of the response stays diagnosable. Lua patterns have no
+-- alternation, so keys are matched generically and looked up in a set.
+local SENSITIVE_JSON_KEYS = {
+    accessToken = true, refreshToken = true, skey = true, apikey = true,
+    api_key = true, wr_skey = true, wr_rt = true, wr_vid = true,
+    wr_ticket = true, ticket = true, vid = true,
+}
+local SENSITIVE_COOKIE_KEYS = { wr_skey = true, wr_rt = true, wr_vid = true, ptcz = true }
+
+function Client.redact_response_body(text, limit)
+    if type(text) ~= "string" then
+        return ""
+    end
+    local redacted = text:gsub('"([%w_]+)"%s*:%s*"([^"]*)"', function(key, value)
+        if SENSITIVE_JSON_KEYS[key] then
+            return '"' .. key .. '":"<redacted>"'
+        end
+        return '"' .. key .. '":"' .. value .. '"'
+    end)
+    redacted = redacted:gsub("([%w_]+)=([^;%s\"']+)", function(name, value)
+        if SENSITIVE_COOKIE_KEYS[name] then
+            return name .. "=<redacted>"
+        end
+        return name .. "=" .. value
+    end)
+    limit = tonumber(limit) or 400
+    if #redacted > limit then
+        redacted = redacted:sub(1, limit) .. "...<truncated>"
+    end
+    return redacted
+end
+
 local function log_response(label, context, text)
     context = context or {}
     text = text or ""
@@ -164,7 +199,7 @@ local function log_response(label, context, text)
         "status=", tostring(context.code or "unknown"),
         "content_type=", tostring(header_value(context.headers, "content-type") or "unknown"),
         "body_bytes=", tostring(#text),
-        "response_body=", text
+        "response_body=", Client.redact_response_body(text)
     )
 end
 

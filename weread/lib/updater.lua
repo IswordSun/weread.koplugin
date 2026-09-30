@@ -137,11 +137,17 @@ function Updater.compare_versions(left, right)
     return 0
 end
 
-function Updater.candidate_urls(url, prefer_proxy)
+-- Release metadata and the checksum are the roots of trust for an update: if a
+-- third-party mirror could serve them it could forge the package and its digest
+-- together, which would make the SHA-256 check meaningless. `direct_only` keeps
+-- those two fetches on the official GitHub host; only the (checksum-verified)
+-- archive may fall back to mirrors.
+function Updater.candidate_urls(url, prefer_proxy, direct_only)
     local is_allowed = url == Updater.API_URL
         or (type(url) == "string"
             and url:sub(1, #Updater.RELEASE_PREFIX) == Updater.RELEASE_PREFIX)
     if not is_allowed then return {} end
+    if direct_only then return { url } end
     local direct, proxies = { url }, {}
     for _, prefix in ipairs(Updater.GITHUB_MIRRORS) do
         proxies[#proxies + 1] = prefix .. url
@@ -275,8 +281,10 @@ function Updater:_http_get(url, destination, on_download, total_hint, max_bytes)
     return destination and true or table.concat(chunks)
 end
 
-function Updater:_http_get_with_mirrors(url, destination, on_download, total_hint, max_bytes)
-    local candidates = Updater.candidate_urls(url, self:_state().prefer_proxy == true)
+function Updater:_http_get_with_mirrors(url, destination, on_download, total_hint, max_bytes,
+                                        direct_only)
+    local candidates = Updater.candidate_urls(url, self:_state().prefer_proxy == true,
+        direct_only)
     if #candidates == 0 then return nil, "update URL is not allowed" end
     local last_error
     for index, candidate in ipairs(candidates) do
@@ -297,7 +305,7 @@ function Updater:_http_get_with_mirrors(url, destination, on_download, total_hin
 end
 
 function Updater:fetch_release()
-    local body, err = self:_http_get_with_mirrors(Updater.API_URL)
+    local body, err = self:_http_get_with_mirrors(Updater.API_URL, nil, nil, nil, nil, true)
     if not body then return nil, err end
     local ok_json, json = pcall(require, "json")
     if not ok_json then return nil, "JSON support unavailable" end
@@ -387,7 +395,8 @@ function Updater:install_release(release, on_progress)
         end, archive_size, Updater.MAX_PACKAGE_BYTES)
     if not ok then remove_tree(stage); return nil, err end
     report("checksum", 76)
-    local checksum_ok, checksum_err = self:_http_get_with_mirrors(release.checksum_url, checksum)
+    local checksum_ok, checksum_err = self:_http_get_with_mirrors(release.checksum_url, checksum,
+        nil, nil, nil, true)
     if not checksum_ok then
         remove_file(archive); remove_tree(stage)
         return nil, checksum_err

@@ -338,13 +338,27 @@ function Sync:run()
                 local changes, range_count, thought_count, byte_count = {}, 0, 0, 0
                 while persist_review <= #persist_rows do
                     local review = persist_rows[persist_review]
+                    local range = type(review) == "table" and review.range or nil
+                    if range == nil or tostring(range) == "" then
+                        -- The gateway can return malformed review entries (JSON null
+                        -- decodes to a function, other scalars to numbers/booleans).
+                        -- Skipping them keeps the checkpoint advancing; aborting here
+                        -- made every resume retry the same element forever while the
+                        -- staging rows stayed behind.
+                        logger.warn("annotation persist skipped a malformed review entry:",
+                            "chapter_uid=", tostring(uid),
+                            "index=", tostring(persist_review),
+                            "type=", type(review))
+                        persist_review = persist_review + 1
+                        goto continue_persist
+                    end
+                    range = tostring(range)
                     local items = Annotations.buildThoughtPopupItems(review)
                     local item_bytes = popup_items_bytes(items)
                     local would_exceed = range_count > 0 and (range_count >= MAX_PERSIST_RANGES
                         or thought_count + #items > MAX_PERSIST_THOUGHTS
                         or byte_count + item_bytes > MAX_PERSIST_BYTES)
                     if would_exceed then break end
-                    local range = tostring(review.range or "")
                     local underline = by_range[range]
                     if underline and External.quote_for(underline, {}) == "" then
                         local quote = External.quote_for(underline, { review })
@@ -360,6 +374,7 @@ function Sync:run()
                     thought_count = thought_count + #items
                     byte_count = byte_count + item_bytes
                     persist_review = persist_review + 1
+                    ::continue_persist::
                 end
                 if persist_review > #persist_rows then
                     changes[#changes + 1] = { kind = "batch", key = uid .. ":" .. persist_batch }

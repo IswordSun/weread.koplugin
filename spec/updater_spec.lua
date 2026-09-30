@@ -60,6 +60,21 @@ expect(#proxy_first == 4 and proxy_first[1]:find("gh%-proxy.com")
 expect(#Updater.candidate_urls("https://example.com/update.zip", true) == 0,
     "untrusted update URL should not receive proxy candidates")
 
+-- Release metadata and the checksum are the roots of trust: a mirror that could
+-- serve either one could forge the package and its digest together.
+local metadata_only = Updater.candidate_urls(Updater.API_URL, true, true)
+expect(#metadata_only == 1 and metadata_only[1] == Updater.API_URL,
+    "release metadata must be fetched from the official host only")
+local checksum_only = Updater.candidate_urls(
+    Updater.RELEASE_PREFIX .. "v0.7.0/weread.koplugin-v0.7.0.zip.sha256", true, true)
+expect(#checksum_only == 1
+    and checksum_only[1] == Updater.RELEASE_PREFIX .. "v0.7.0/weread.koplugin-v0.7.0.zip.sha256",
+    "the checksum must be fetched from the official host only")
+local archive_candidates = Updater.candidate_urls(
+    Updater.RELEASE_PREFIX .. "v0.7.0/weread.koplugin-v0.7.0.zip", true)
+expect(#archive_candidates == 4 and archive_candidates[1]:find("gh%-proxy.com"),
+    "the checksum-verified archive should keep its mirror fallbacks")
+
 -- Release fixtures follow the configured repository so the spec stays host-agnostic.
 local release_tag_base = Updater.RELEASE_PREFIX:gsub("/download/$", "/tag/")
 

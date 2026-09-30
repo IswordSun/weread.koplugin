@@ -699,4 +699,29 @@ expect(fallback_ok == true and fallback_path == "renewal",
 expect(SessionState.is_invalid() == false,
     "fallback renewal did not clear the session state")
 
+-- Response bodies reach crash.log, so credential values must be redacted while
+-- the diagnostic shape of the response is preserved. Placeholder values keep the
+-- repository's sensitive-information scan clean.
+local redacted = Client.redact_response_body(
+    '{"succ":0,"errCode":-2012,"errmsg":"session expired","skey":"XXX-spec-skey",'
+    .. '"accessToken":"XXX-spec-access","refreshToken":"XXX-spec-refresh",'
+    .. '"apikey":"wrk-xxxxxxxxxxxxxxxx"}')
+expect(redacted:find("XXX-spec-skey", 1, true) == nil, "a skey value was not redacted")
+expect(redacted:find("XXX-spec-access", 1, true) == nil, "the access token was not redacted")
+expect(redacted:find("XXX-spec-refresh", 1, true) == nil, "the refresh token was not redacted")
+expect(redacted:find("wrk-xxxxxxxxxxxxxxxx", 1, true) == nil, "the API key was not redacted")
+expect(redacted:find('"errCode":-2012', 1, true) ~= nil, "the error code was lost")
+expect(redacted:find("session expired", 1, true) ~= nil, "the error message was lost")
+
+local cookie_redacted = Client.redact_response_body(
+    "Cookie: wr_skey=XXX-spec-cookie-1; wr_rt=XXX-spec-cookie-2; theme=dark")
+expect(cookie_redacted:find("XXX-spec-cookie-1", 1, true) == nil, "a cookie skey was not redacted")
+expect(cookie_redacted:find("XXX-spec-cookie-2", 1, true) == nil,
+    "a cookie refresh token was not redacted")
+expect(cookie_redacted:find("theme=dark", 1, true) ~= nil, "unrelated cookies were dropped")
+
+local truncated = Client.redact_response_body(string.rep("x", 4000))
+expect(#truncated <= 420, "the logged response body was not truncated")
+expect(Client.redact_response_body(nil) == "", "a nil body was not normalized")
+
 print(("client_spec: %d checks"):format(checks))

@@ -468,6 +468,36 @@ assert(poison_items and #poison_items == 1 and poison_items[1].content == "ok"
         and poison_items[1].author == "匿名",
     "malformed pageReview entries were not degraded to a safe popup item")
 
+-- A scalaron review element (the gateway can return JSON null, which decodes to
+-- a function, or a bare number/string) must be skipped instead of crashing the
+-- persist step: a crash there left the checkpoint pinned and the chapter could
+-- never finish syncing.
+local scalar_client = {
+    get_chapter_underlines = function()
+        return true, { underlines = {
+            { range = "1-1", markText = "alpha" }, { range = "3-4", markText = "beta" } } }
+    end,
+    build_chapter_review_batches = function(_self, ranges) return { ranges } end,
+    get_chapter_reviews_batch = function()
+        return true, { reviews = {
+            42,
+            "scalar",
+            { range = "1-1", pageReviews = { { review = { content = "kept", author = {} } } } },
+        } }
+    end,
+}
+local scalar_store = helper.new()
+local scalar_done, scalar_err = finish(Sync:new({ store = scalar_store, client = scalar_client,
+    book_id = "scalar", chapters = { { chapterUid = "1" } } }))
+assert(scalar_done, "a scalar review element stalled the chapter: " .. tostring(scalar_err))
+local scalar_items = scalar_store:get("scalar", "thought", "1:1-1")
+assert(scalar_items and #scalar_items == 1 and scalar_items[1].content == "kept",
+    "the valid review next to malformed elements was not persisted")
+assert(scalar_store:get("scalar", "thought", "1:") == nil,
+    "a malformed review element produced a thought row without a range")
+assert(scalar_store:get("scalar", "batch", "1:1") == nil,
+    "the persisted batch rows were not cleaned up after skipping malformed reviews")
+
 -- A chapter whose matching exceeds its per-chapter budget is recorded as
 -- partially matched (remaining underlines unmatched), and the job still
 -- completes instead of blocking on it; the aborted chapter is not cached.

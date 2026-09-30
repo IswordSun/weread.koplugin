@@ -60,21 +60,24 @@ expect(#proxy_first == 4 and proxy_first[1]:find("gh%-proxy.com")
 expect(#Updater.candidate_urls("https://example.com/update.zip", true) == 0,
     "untrusted update URL should not receive proxy candidates")
 
+-- Release fixtures follow the configured repository so the spec stays host-agnostic.
+local release_tag_base = Updater.RELEASE_PREFIX:gsub("/download/$", "/tag/")
+
 local release, release_err = Updater.parse_release({
     tag_name = "v0.7.0",
     draft = false,
     prerelease = false,
     body = "## What's Changed\n\n**Added** `updates`",
-    html_url = "https://github.com/finlater/weread.koplugin/releases/tag/v0.7.0",
+    html_url = release_tag_base .. "v0.7.0",
     assets = {
         {
             name = "weread.koplugin-v0.7.0.zip",
-            browser_download_url = "https://github.com/finlater/weread.koplugin/releases/download/v0.7.0/weread.koplugin-v0.7.0.zip",
+            browser_download_url = Updater.RELEASE_PREFIX .. "v0.7.0/weread.koplugin-v0.7.0.zip",
             size = 1234,
         },
         {
             name = "weread.koplugin-v0.7.0.zip.sha256",
-            browser_download_url = "https://github.com/finlater/weread.koplugin/releases/download/v0.7.0/weread.koplugin-v0.7.0.zip.sha256",
+            browser_download_url = Updater.RELEASE_PREFIX .. "v0.7.0/weread.koplugin-v0.7.0.zip.sha256",
         },
     },
 })

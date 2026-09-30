@@ -11,8 +11,8 @@ Updater.__index = Updater
 
 Updater.AUTO_CHECK_INTERVAL = 60 * 60
 Updater.MAX_PACKAGE_BYTES = 10 * 1024 * 1024
-Updater.API_URL = "https://api.github.com/repos/finlater/weread.koplugin/releases/latest"
-Updater.RELEASE_PREFIX = "https://github.com/finlater/weread.koplugin/releases/download/"
+Updater.API_URL = "https://api.github.com/repos/IswordSun/weread.koplugin/releases/latest"
+Updater.RELEASE_PREFIX = "https://github.com/IswordSun/weread.koplugin/releases/download/"
 Updater.GITHUB_MIRRORS = {
     "https://gh-proxy.com/",
     "https://ghfast.top/",

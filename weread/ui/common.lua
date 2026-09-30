@@ -236,16 +236,36 @@ function M:maybeKeepAliveSession()
     return true
 end
 
+-- KOReader builds a fresh plugin instance for every document, so an instance
+-- whose book was closed must stop ticking: the task keeps the whole instance
+-- (and its stale settings snapshot) alive, and its next renewal would flush
+-- that snapshot over newer writes from other instances.
 function M:startSessionKeepAliveTimer()
     if type(UIManager.scheduleIn) ~= "function" then
         return
     end
-    UIManager:scheduleIn(SESSION_KEEPALIVE_TICK_SECONDS, function()
+    if self._session_keepalive_task then
+        return
+    end
+    local function tick()
+        self._session_keepalive_task = nil
+        if self._session_keepalive_stopped then
+            return
+        end
         if self.maybeKeepAliveSession then
             self:maybeKeepAliveSession()
         end
         self:startSessionKeepAliveTimer()
-    end)
+    end
+    self._session_keepalive_task = UIManager:scheduleIn(SESSION_KEEPALIVE_TICK_SECONDS, tick)
+end
+
+function M:stopSessionKeepAliveTimer()
+    self._session_keepalive_stopped = true
+    if self._session_keepalive_task and type(UIManager.unschedule) == "function" then
+        UIManager:unschedule(self._session_keepalive_task)
+    end
+    self._session_keepalive_task = nil
 end
 
 function M:requireLogin(require_cookie, require_api_key)

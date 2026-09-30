@@ -194,6 +194,11 @@ function M:onCloseDocument()
     self:_teardownThoughtInterception()
     self:_teardownXPointerOverlayPrototype()
     self:_removeReaderHighlightTapGuard()
+    -- This instance is done with the document: stop its keep-alive timer so the
+    -- closed instance cannot renew the session and rewrite settings later on.
+    if self.stopSessionKeepAliveTimer then
+        self:stopSessionKeepAliveTimer()
+    end
 
     if self._orig_onEndOfBook and self.ui.status then
         self.ui.status.onEndOfBook = self._orig_onEndOfBook
